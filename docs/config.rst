@@ -208,9 +208,40 @@ A few examples for satellite sections, assigning scores to each satellite.
 
 ``trimmable``
 	Optional, ``false`` by default. When two passes of satellites both marked
-	``trimmable: true`` overlap in time, but only in the parts of the passes
-	outside the area of interest, the passes are shortened so that both can be
-	received: the overlap is shared equally, without cutting anything covering
-	the area of interest, and with the scheduling delay in between. When the
-	passes overlap over the area of interest, nothing is trimmed and the
-	scheduler picks one of them as usual.
+	``trimmable: true`` overlap in time, they may be shortened so that both can
+	be received. The overlap is shared equally where their coverage allowances
+	permit, with the scheduling delay in between and the minimum pass duration
+	preserved. By default, only reception outside the area of interest is
+	removed. If the conflict cannot be resolved within these constraints,
+	nothing is trimmed and the scheduler picks one pass as usual.
+
+``max_coverage_loss``
+	Optional number from 0 to 100, expressed in percent, with a default of 0.
+	When ``trimmable: true``, this sets the maximum fraction of each pass's
+	original coverage of the area of interest that may be lost through
+	trimming. For example, 5 retains at least 95 percent of the area that the
+	untrimmed pass covered, not 95 percent of the entire area of interest or
+	of the pass duration. The limit remains relative to the original pass
+	even when both ends are trimmed in a chain of overlaps.
+
+	A small numerical tolerance of 0.01 percent applies to the retained
+	coverage threshold because of swath-boundary sampling. Setting the
+	allowance does not enable trimming by itself; both satellites must still
+	be marked ``trimmable: true``. A value of 100 allows all area coverage to
+	be lost, but does not remove the minimum-duration or scheduling-delay
+	constraints.
+
+For example, allow each of these satellites to lose up to 5 percent of its
+original coverage when resolving a conflict::
+
+    satellites:
+        metop-sga1:
+            day: 0.7
+            night: 0.5
+            trimmable: true
+            max_coverage_loss: 5
+        fengyun 3f:
+            day: 0.8
+            night: 0.2
+            trimmable: true
+            max_coverage_loss: 5

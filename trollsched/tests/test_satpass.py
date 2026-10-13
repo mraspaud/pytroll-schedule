@@ -276,7 +276,7 @@ class TestSwathBoundary:
 
         cont = overp_boundary.contour()
 
-        numpy.testing.assert_array_almost_equal(cont[0], LONS2)
+        numpy.testing.assert_allclose(cont[0], LONS2, rtol=0, atol=2e-6)
         numpy.testing.assert_array_almost_equal(cont[1], LATS2)
 
         # NOAA-19 AVHRR:

@@ -31,6 +31,15 @@ def test_in_area_window_of_a_pass_over_the_area_all_along_is_the_whole_pass(nove
     assert in_area_window(sga1, EURON1) == (sga1.risetime, sga1.falltime)
 
 
+def test_coverage_loss_allowance_shortens_the_required_reception_window(november_2025_tle_file):
+    """A configured loss permits dropping either end of an otherwise fully in-area pass."""
+    sga1 = create_pass("METOP-SGA1", "avhrr", dt.datetime(2025, 11, 21, 9, 29), dt.datetime(2025, 11, 21, 9, 31),
+                       str(november_2025_tle_file))
+    sga1.satellite.max_coverage_loss = 25
+    start, end = in_area_window(sga1, EURON1)
+    assert sga1.risetime < start < end < sga1.falltime
+
+
 def reception_times(passes):
     """Get the reception start and end times of *passes*."""
     return [(overpass.risetime, overpass.falltime) for overpass in passes]
@@ -79,6 +88,54 @@ def test_passes_overlapping_over_the_area_are_left_untouched(sga1_and_fy3f_overl
     untouched = trim_associated_overlaps(sga1_and_fy3f_overlapping_outside_the_area, EURON1, three_minutes)
 
     assert reception_times(untouched) == reception_times(sga1_and_fy3f_overlapping_outside_the_area)
+
+
+def test_configured_coverage_loss_allows_conflicts_over_the_area_to_be_trimmed(
+        sga1_and_fy3f_overlapping_outside_the_area):
+    """Both passes can be received when the allowed coverage loss makes the delay feasible."""
+    for overpass in sga1_and_fy3f_overlapping_outside_the_area:
+        overpass.satellite.max_coverage_loss = 25
+    first, second = trim_associated_overlaps(sga1_and_fy3f_overlapping_outside_the_area, EURON1, 3 * ONE_MINUTE)
+    assert first.falltime + 3 * ONE_MINUTE <= second.risetime
+    assert all(result.area_coverage(EURON1) >= original.area_coverage(EURON1) * 0.75 * (1 - OUTLINE_SAMPLING_NOISE)
+               for result, original in zip((first, second), sga1_and_fy3f_overlapping_outside_the_area))
+
+
+def test_coverage_loss_does_not_compound_when_both_ends_of_a_pass_are_trimmed(november_2025_tle_file):
+    """The middle pass's allowance remains relative to its original coverage across the chain."""
+    start = dt.datetime(2025, 11, 21, 9, 27)
+    originals = [trimmable_pass("METOP-SGA1", "avhrr", start + offset * ONE_MINUTE,
+                                start + (offset + 6) * ONE_MINUTE, november_2025_tle_file)
+                 for offset in (-4, 0, 4)]
+    for overpass, loss in zip(originals, (100, 25, 100)):
+        overpass.satellite.max_coverage_loss = loss
+    _, middle, _ = trim_associated_overlaps(originals, EURON1, 3 * ONE_MINUTE, shortest_pass=ONE_MINUTE)
+    assert middle.area_coverage(EURON1) >= originals[1].area_coverage(EURON1) * 0.75 * (1 - OUTLINE_SAMPLING_NOISE)
+
+
+@pytest.mark.parametrize("zero_loss_index", [0, 1])
+def test_each_satellite_retains_its_own_coverage_allowance(
+        zero_loss_index, sga1_and_fy3f_overlapping_outside_the_area):
+    """A permissive satellite does not let its zero-loss neighbor give up area coverage."""
+    originals = sga1_and_fy3f_overlapping_outside_the_area
+    for index, overpass in enumerate(originals):
+        overpass.satellite.max_coverage_loss = 0 if index == zero_loss_index else 100
+    results = trim_associated_overlaps(originals, EURON1, 3 * ONE_MINUTE)
+    assert results[0].falltime + 3 * ONE_MINUTE <= results[1].risetime
+    assert results[zero_loss_index].area_coverage(EURON1) >= (
+        originals[zero_loss_index].area_coverage(EURON1) * (1 - OUTLINE_SAMPLING_NOISE))
+
+
+@pytest.mark.parametrize("unmarked_index", [0, 1])
+def test_coverage_loss_does_not_enable_trimming_for_unmarked_satellites(
+        unmarked_index, sga1_and_fy3f_overlapping_outside_the_area):
+    """Both satellites must opt in even when their configured loss allowances are permissive."""
+    originals = sga1_and_fy3f_overlapping_outside_the_area
+    for overpass in originals:
+        overpass.satellite.max_coverage_loss = 100
+    originals[unmarked_index].satellite.trimmable = False
+    results = trim_associated_overlaps(originals, EURON1, 3 * ONE_MINUTE)
+    assert reception_times(results) == reception_times(originals)
 
 
 def test_passes_overlapping_a_pass_not_marked_trimmable_are_left_untouched(sga1_and_fy3f_overlapping_outside_the_area):

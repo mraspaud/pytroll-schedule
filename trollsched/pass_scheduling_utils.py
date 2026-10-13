@@ -36,10 +36,14 @@ class Satellite:
     """The Satellite class holding information on its score, name and designator."""
 
     def __init__(self, name, day, night,
-                 schedule_name=None, international_designator=None, trimmable=False):
+                 schedule_name=None, international_designator=None, trimmable=False, max_coverage_loss=0):
         """Initialize the satellite."""
+        if (isinstance(max_coverage_loss, bool) or not isinstance(max_coverage_loss, (int, float)) or
+                not 0 <= max_coverage_loss <= 100):
+            raise ValueError("max_coverage_loss must be a number between 0 and 100 percent")
         self.name = name
         self.trimmable = trimmable
+        self.max_coverage_loss = max_coverage_loss
         self.international_designator = international_designator
         self.score = SatScore(day, night)
         self.schedule_name = schedule_name or name

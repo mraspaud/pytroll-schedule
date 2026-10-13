@@ -21,18 +21,27 @@ def _coverage(overpass, area_of_interest):
     return 0 if common is None else common.area()
 
 
-def in_area_window(overpass, area_of_interest):
-    """Get the start and end times between which *overpass* covers *area_of_interest*."""
-    full_coverage = _coverage(overpass, area_of_interest) * (1 - OUTLINE_SAMPLING_NOISE)
+def in_area_window(overpass, area_of_interest, original_coverage=None):
+    """Get independent rise/fall limits retaining the configured area coverage.
 
-    def covers_all_from(risetime):
-        return _coverage(trimmed(overpass, risetime, overpass.falltime), area_of_interest) >= full_coverage
+    Args:
+        overpass: The pass to shorten.
+        area_of_interest: The area whose coverage should be retained.
+        original_coverage: Intersection area before earlier trims; defaults to current coverage.
+    """
+    retained_fraction = 1 - overpass.satellite.max_coverage_loss / 100
+    if original_coverage is None:
+        original_coverage = _coverage(overpass, area_of_interest)
+    minimum_coverage = original_coverage * retained_fraction * (1 - OUTLINE_SAMPLING_NOISE)
 
-    def covers_all_until(falltime):
-        return _coverage(trimmed(overpass, overpass.risetime, falltime), area_of_interest) >= full_coverage
+    def covers_enough_from(risetime):
+        return _coverage(trimmed(overpass, risetime, overpass.falltime), area_of_interest) >= minimum_coverage
 
-    return (_last_time_holding(covers_all_from, overpass.risetime, overpass.falltime),
-            _last_time_holding(covers_all_until, overpass.falltime, overpass.risetime))
+    def covers_enough_until(falltime):
+        return _coverage(trimmed(overpass, overpass.risetime, falltime), area_of_interest) >= minimum_coverage
+
+    return (_last_time_holding(covers_enough_from, overpass.risetime, overpass.falltime),
+            _last_time_holding(covers_enough_until, overpass.falltime, overpass.risetime))
 
 
 def _last_time_holding(condition, holds, fails):
@@ -46,9 +55,11 @@ def _last_time_holding(condition, holds, fails):
 def trim_associated_overlaps(passes, area_of_interest, delay, shortest_pass=dt.timedelta(minutes=MIN_PASS)):
     """Trim overlapping passes outside *area_of_interest*, so they can all be received."""
     passes = sorted(passes, key=lambda overpass: overpass.risetime)
+    original_passes = passes.copy()
     for index in range(len(passes) - 1):
         passes[index], passes[index + 1] = _trim_pair(passes[index], passes[index + 1],
-                                                      area_of_interest, delay, shortest_pass)
+                                                      area_of_interest, delay, shortest_pass,
+                                                      original_passes[index:index + 2])
     return passes
 
 
@@ -56,11 +67,12 @@ def _are_associated(first, second, delay):
     return first.satellite.trimmable and second.satellite.trimmable and first.overlaps(second, delay)
 
 
-def _trim_pair(first, second, area_of_interest, delay, shortest_pass):
+def _trim_pair(first, second, area_of_interest, delay, shortest_pass, original_pair):
     if not _are_associated(first, second, delay):
         return first, second
-    _, first_end = in_area_window(first, area_of_interest)
-    second_start, _ = in_area_window(second, area_of_interest)
+    original_first, original_second = original_pair
+    _, first_end = in_area_window(first, area_of_interest, _coverage(original_first, area_of_interest))
+    second_start, _ = in_area_window(second, area_of_interest, _coverage(original_second, area_of_interest))
     if first_end + delay > second_start:
         return first, second
     conflict_start = second.risetime - delay

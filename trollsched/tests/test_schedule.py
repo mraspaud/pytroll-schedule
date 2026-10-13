@@ -514,3 +514,15 @@ def test_schedule_receives_both_trimmable_passes_overlapping_outside_the_area(tm
                               forward=1, coords=(16.148649, 58.581844, 0.052765))
 
     assert [overpass.satellite.name for overpass in get_passes_from_xml_file([sched_file])] == ["sga1", "fy3f"]
+
+
+def test_schedule_uses_configured_coverage_loss_to_receive_both_passes(tmp_path, november_2025_tle_file):
+    """The YAML allowance lets both passes be scheduled despite a longer switching delay."""
+    satellites = {"fengyun 3f": dict(schedule_name="fy3f", night=0.2, day=0.8,
+                                    trimmable=True, max_coverage_loss=25),
+                  "metop-sga1": dict(schedule_name="sga1", night=0.7, day=0.5,
+                                     trimmable=True, max_coverage_loss=25)}
+    sched_file = run_schedule(tmp_path, november_2025_tle_file.read_text(), satellites, "2025-11-21T09:20:00",
+                              forward=1, coords=(16.148649, 58.581844, 0.052765),
+                              extra_args=["--delay", "180"])
+    assert [overpass.satellite.name for overpass in get_passes_from_xml_file([sched_file])] == ["sga1", "fy3f"]
