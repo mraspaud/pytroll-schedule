@@ -22,6 +22,7 @@
 
 """Test the satellite pass and swath boundary classes."""
 
+import hashlib
 from datetime import datetime, timedelta
 
 import numpy as np
@@ -33,7 +34,8 @@ from pyproj import Geod
 from pyresample.geometry import AreaDefinition, create_area_def
 
 from trollsched.boundary import InstrumentNotSupported, SwathBoundary
-from trollsched.satpass import Pass, create_pass
+from trollsched.pass_scheduling_utils import Satellite
+from trollsched.satpass import Pass, create_pass, get_next_passes
 
 LONS1 = np.array([-122.29913729167814, -131.60058159571031, -155.961213760717,
                   143.3119727554512, 106.02965751347901, 93.36126835337495,
@@ -601,3 +603,35 @@ def test_create_pass_olci(fake_long_tle_file):
     np.testing.assert_almost_equal(b.bottom_lats[0], ref_se_lat, decimal=0)
     np.testing.assert_almost_equal(b.bottom_lons[-1], ref_sw_lon, decimal=0)
     np.testing.assert_almost_equal(b.bottom_lats[-1], ref_sw_lat, decimal=0)
+
+
+FENGYUN_3H_TLE = """FENGYUN 3H
+1 65815U 25219A   26278.81334123  .00000027  00000+0  32934-4 0  9997
+2 65815  98.6851 217.4624 0001566  86.9554 273.1802 14.19935530 53084
+"""
+
+
+def test_fengyun_3h_passes_are_mersi_3_passes(tmp_path):
+    """Test that FY-3H passes are computed with the MERSI-3 instrument, as on FY-3F."""
+    tle_file = tmp_path / "fy3h.tle"
+    tle_file.write_text(FENGYUN_3H_TLE)
+
+    passes = get_next_passes([Satellite("fengyun 3h", 0.8, 0.2)], datetime(2026, 10, 6), 12,
+                             (16.148649, 58.581844, 0.052765), str(tle_file))
+
+    assert {overpass.instrument for overpass in passes} == {"mersi-3"}
+
+
+def test_meos_identifier_works_when_security_md5_is_disabled(fake_noaa20_viirs_pass_instance, monkeypatch):
+    """MEOS output stays identical when MD5 is allowed only for non-security use."""
+    overpass = fake_noaa20_viirs_pass_instance
+    expected = overpass.print_meos((16, 58, 0), 1)
+    original_md5 = hashlib.md5
+
+    def non_security_md5(data, *, usedforsecurity=True):
+        if usedforsecurity:
+            raise ValueError("MD5 disabled for security use")
+        return original_md5(data, usedforsecurity=False)
+
+    monkeypatch.setattr(hashlib, "md5", non_security_md5)
+    assert overpass.print_meos((16, 58, 0), 1) == expected

@@ -22,7 +22,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """Satellite passes."""
 
-import ftplib
+import ftplib  # nosec B402 - Dump retrieval uses FTP_TLS and protected data transfers.
 import glob
 import hashlib
 import logging
@@ -30,8 +30,6 @@ import logging.handlers
 import operator
 import os
 import socket
-import ssl
-import sys
 from datetime import datetime, timedelta
 from functools import reduce as fctools_reduce
 from tempfile import gettempdir, mkstemp
@@ -117,7 +115,6 @@ class SimplePass:
                 other, Pass):
             return (self.satellite.name == other.satellite.name and
                     self.orb.get_orbit_number(self.risetime) == other.orb.get_orbit_number(other.risetime))
-        timedelta(seconds=1)
         return (other is not None and
                 self.satellite.name == other.satellite.name and
                 self.overlaps(other))
@@ -265,7 +262,7 @@ class Pass(SimplePass):
 
     def generate_metno_xml(self, coords, root):
         """Generate a metno xml schedule."""
-        import xml.etree.ElementTree as ET  # noqa because defusedxml has no SubElement
+        import xml.etree.ElementTree as ET  # nosec B405 - XML generation only; no untrusted input is parsed.
 
         asimuth_at_max_elevation, max_elevation = self.orb.get_observer_look(self.uptime, *coords)
         pass_direction = self.pass_direction().capitalize()[:1]
@@ -307,13 +304,11 @@ class Pass(SimplePass):
         dur_minutes, dur_seconds = divmod(dur_reminder, 60)
         duration = "{:0>2}:{:0>2}".format(dur_minutes, dur_seconds)
 
-        pass_key = hashlib.md5(("{:s}|{:d}|{:d}|{:.3f}|{:.3f}".  # noqa : md5 is insecure, but not sensitive here.
-                                format(SATELLITE_MEOS_TRANSLATION.get(self.satellite.name.upper(),
-                                                                      self.satellite.name.upper()),
-                                       int(orbit),
-                                       aos_epoch,
-                                       sat_lon,
-                                       sat_lat)).encode("utf-8")).hexdigest()
+        pass_identity = "{:s}|{:d}|{:d}|{:.3f}|{:.3f}".format(
+            SATELLITE_MEOS_TRANSLATION.get(self.satellite.name.upper(), self.satellite.name.upper()),
+            int(orbit), aos_epoch, sat_lon, sat_lat,
+        )
+        pass_key = hashlib.md5(pass_identity.encode("utf-8"), usedforsecurity=False).hexdigest()
 
         line_list = [" {line_no:>2}",
                      "{date}",
@@ -427,6 +422,70 @@ def get_aqua_terra_dumps(start_time,
     return dumps
 
 
+def _parse_dump_report(lines):
+    dumps = []
+    for line in lines[7::2]:
+        if line.strip() == "":
+            break
+        station, aos, elev, los = line.split()[:4]
+        aos = datetime.strptime(aos, "%Y:%j:%H:%M:%S")
+        los = datetime.strptime(los, "%Y:%j:%H:%M:%S")
+        dumps.append({"station": station, "aos": aos, "los": los, "elev": elev})
+    return dumps
+
+
+def _read_dump_report(ftp, remote_directory, filename):
+    cached_file = os.path.join(gettempdir(), filename)
+    if os.path.exists(cached_file):
+        with open(cached_file) as stream:
+            return stream.readlines()
+    lines = []
+    try:
+        ftp.prot_p()
+        ftp.retrlines("RETR " + os.path.join(remote_directory, filename), lines.append)
+    except ftplib.error_perm:
+        logger.info("Permission error (???) on ftp server, skipping.")
+        return None
+    with open(cached_file, "w") as stream:
+        stream.writelines(line + "\n" for line in lines)
+    return lines
+
+
+def _connect_dump_ftp(host):
+    logger.debug("Connect to ftp server")
+    try:
+        ftp = ftplib.FTP_TLS(host)
+    except (socket.error, socket.gaierror) as error:
+        logger.error("cannot reach to %s %s", host, error)
+        return None
+    try:
+        ftp.login("anonymous", "guest")
+        logger.debug("Logged in")
+    except ftplib.error_perm:
+        logger.error("cannot login anonymously")
+        ftp.quit()
+        return None
+    return ftp
+
+
+def _list_dump_reports(ftp, remote_directory):
+    if ftp is not None:
+        data = []
+        try:
+            ftp.prot_p()
+            ftp.dir(remote_directory, data.append)
+        except socket.error as error:
+            logger.error("Can't get any data: %s", error)
+            ftp.quit()
+            ftp = None
+        else:
+            filenames = [line.split()[-1] for line in data]
+    if ftp is None:
+        logger.info("Can't access ftp server, using cached data")
+        filenames = glob.glob(os.path.join(gettempdir(), "*.rpt"))
+    return ftp, filenames
+
+
 def get_aqua_terra_dumpdata_from_ftp(sat, dump_url):
     """Get the information on the internet on the actual global dumps of Terra and Aqua."""
     logger.info("Fetch %s dump info from internet", str(sat.name))
@@ -434,94 +493,42 @@ def get_aqua_terra_dumpdata_from_ftp(sat, dump_url):
         url = urlparse(dump_url % sat.name)
     else:
         url = urlparse(HOST % sat.name)
-    logger.debug("Connect to ftp server")
-    try:
-        f = ftplib.FTP_TLS(url.netloc)
-    except (socket.error, socket.gaierror) as e:
-        logger.error("cannot reach to %s " % url.netloc + str(e))
-        f = None
+    ftp, filenames = _list_dump_reports(_connect_dump_ftp(url.netloc), url.path)
 
-    if f is not None:
-        try:
-            if sys.version_info < (2, 7, 10):
-                f.ssl_version = ssl.PROTOCOL_SSLv23
-            f.login("anonymous", "guest")
-            logger.debug("Logged in")
-        except ftplib.error_perm:
-            logger.error("cannot login anonymously")
-            f.quit()
-            f = None
-
-    if f is not None:
-        data = []
-        try:
-            f.prot_p()  # explicitly call for protected transfer
-            f.dir(url.path, data.append)
-        except socket.error as e:
-            logger.error("Can't get any data: " + str(e))
-            f.quit()
-            f = None
-        else:
-            filenames = [line.split()[-1] for line in data]
-
-    if f is None:
-        logger.info("Can't access ftp server, using cached data")
-        filenames = glob.glob(os.path.join(gettempdir(), "*.rpt"))
-
-    filenames = [
-        x for x in filenames if x.startswith("wotis.") and x.endswith(".rpt")
-    ]
-    dates = [
+    filenames = [name for name in filenames if name.startswith("wotis.") and name.endswith(".rpt")]
+    report_dates = [
         datetime.strptime("".join(filename.split(".")[2:4]), "%Y%j%H%M%S")
         for filename in filenames
     ]
-    filedates = dict(zip(dates, filenames))
+    filenames_by_date = dict(zip(report_dates, filenames))
 
     dumps = []
 
-    for date in sorted(dates):
-        lines = []
-        if not os.path.exists(os.path.join(gettempdir(), filedates[date])):
-            try:
-                f.prot_p()  # explicitly call for protected transfer
-                f.retrlines("RETR " + os.path.join(url.path, filedates[date]),
-                            lines.append)
-            except ftplib.error_perm:
-                logger.info("Permission error (???) on ftp server, skipping.")
-                continue
-            with open(os.path.join(gettempdir(), filedates[date]), "w") as fd_:
-                for line in lines:
-                    fd_.write(line + "\n")
+    for date in sorted(report_dates):
+        lines = _read_dump_report(ftp, url.path, filenames_by_date[date])
+        if lines is not None:
+            dumps.extend(_parse_dump_report(lines))
 
-        else:
-            with open(os.path.join(gettempdir(), filedates[date]), "r") as fd_:
-                for line in fd_:
-                    lines.append(line)
-
-        # for line in lines[7::2]:
-        #     if line.strip() == '':
-        #         break
-        #     station, aos, elev, los = line.split()[:4]
-        #     aos = datetime.strptime(aos, "%Y:%j:%H:%M:%S")
-        #     los = datetime.strptime(los, "%Y:%j:%H:%M:%S")
-        #     if los >= start_time and aos <= end_time:
-        #         uptime = aos + (los - aos) / 2
-        #         overpass = Pass(sat, aos, los, orb=satorb, uptime=uptime, instrument="modis")
-        #         overpass.station = station
-        #         overpass.max_elev = elev
-        #         dumps.append(overpass)
-
-        for line in lines[7::2]:
-            if line.strip() == "":
-                break
-            station, aos, elev, los = line.split()[:4]
-            aos = datetime.strptime(aos, "%Y:%j:%H:%M:%S")
-            los = datetime.strptime(los, "%Y:%j:%H:%M:%S")
-            dumps.append({"station": station, "aos": aos, "los": los, "elev": elev})
-
-    if f is not None:
-        f.quit()
+    if ftp is not None:
+        ftp.quit()
     return dumps
+
+
+def _instrument_for_satellite(name):
+    upper_name, lower_name = name.upper(), name.lower()
+    if upper_name in VIIRS_PLATFORM_NAMES:
+        return "viirs"
+    if lower_name.startswith(("metop", "noaa")):
+        return "avhrr"
+    if lower_name in ("aqua", "terra"):
+        return "modis"
+    if upper_name in MERSI_PLATFORM_NAMES:
+        return "mersi"
+    if upper_name in MERSI2_PLATFORM_NAMES:
+        return "mersi-2"
+    if upper_name in MERSI3_PLATFORM_NAMES:
+        return "mersi-3"
+    return "unknown"
 
 
 def get_next_passes(satellites,
@@ -572,20 +579,7 @@ def get_next_passes(satellites,
             # Get the Terra/Aqua passes and fill the passes dict:
             get_terra_aqua_passes(passes, utctime, forward, sat, passlist, satorb, aqua_terra_dumps)
         else:
-            if sat.name.upper() in VIIRS_PLATFORM_NAMES:
-                instrument = "viirs"
-            elif sat.name.lower().startswith("metop") or sat.name.lower().startswith("noaa"):
-                instrument = "avhrr"
-            elif sat.name.lower() in ["aqua", "terra"]:  # when aqua_terra_dumps=False
-                instrument = "modis"
-            elif sat.name.upper() in MERSI_PLATFORM_NAMES:
-                instrument = "mersi"
-            elif sat.name.upper() in MERSI2_PLATFORM_NAMES:
-                instrument = "mersi-2"
-            elif sat.name.upper() in MERSI3_PLATFORM_NAMES:
-                instrument = "mersi-3"
-            else:
-                instrument = "unknown"
+            instrument = _instrument_for_satellite(sat.name)
 
             passes[sat.name] = [
                 Pass(sat, rtime, ftime, orb=satorb, uptime=uptime, instrument=instrument)
@@ -617,6 +611,77 @@ def get_metopa_passes(sat, passlist, satorb):
     return passes
 
 
+def _modis_passes(satellite, windows, orbit):
+    return [Pass(satellite, rise, fall, orb=orbit, uptime=uptime, instrument="modis")
+            for rise, fall, uptime in windows if rise < fall]
+
+
+def _dump_station_passes(satellite, orbit, utctime, forward, coords):
+    windows = orbit.get_next_passes(utctime - timedelta(minutes=30), forward + 1, *coords)
+    return _modis_passes(satellite, windows, orbit)
+
+
+def _exclude_known_dump(candidates, dump, coords, station_code):
+    for index, overpass in enumerate(candidates):
+        if overpass.overlaps(dump, timedelta(minutes=40)):
+            elevation = overpass.orb.get_observer_look(overpass.uptime, *coords)[1]
+            logger.debug("Computed %s", (station_code, overpass, elevation))
+            del candidates[index]
+
+
+def _choose_dump_pass(svalbard, poker_flat, svalbard_coords, poker_flat_coords):
+    svalbard_elevation = svalbard.orb.get_observer_look(svalbard.uptime, *svalbard_coords)[1]
+    poker_flat_elevation = poker_flat.orb.get_observer_look(poker_flat.uptime, *poker_flat_coords)[1]
+    if poker_flat_elevation > 20:
+        return poker_flat
+    if svalbard_elevation > poker_flat_elevation:
+        return svalbard
+    return poker_flat
+
+
+def _infer_dump_passes(svalbard_passes, poker_flat_passes, svalbard_coords, poker_flat_coords):
+    dumps, used_poker_flat = [], []
+    for svalbard in svalbard_passes:
+        for poker_flat in poker_flat_passes:
+            if svalbard.overlaps(poker_flat):
+                used_poker_flat.append(poker_flat)
+                dumps.append(_choose_dump_pass(svalbard, poker_flat, svalbard_coords, poker_flat_coords))
+                break
+        else:
+            dumps.append(svalbard)
+    for poker_flat in poker_flat_passes:
+        if poker_flat not in used_poker_flat:
+            dumps.append(poker_flat)
+    return dumps
+
+
+def _adjust_pass_for_dump(overpass, dump):
+    if not dump.overlaps(overpass):
+        return True
+    if dump.uptime < overpass.uptime and dump.falltime > overpass.risetime:
+        logger.debug("adjusting %s to new risetime %s", overpass, dump.falltime)
+        overpass.risetime = dump.falltime
+        overpass.boundary = SwathBoundary(overpass)
+    elif dump.uptime >= overpass.uptime and dump.risetime < overpass.falltime:
+        logger.debug("adjusting %s to new falltime %s", overpass, dump.risetime)
+        overpass.falltime = dump.risetime
+        overpass.boundary = SwathBoundary(overpass)
+    if overpass.falltime <= overpass.risetime:
+        logger.debug("skipping %s", overpass)
+        return False
+    return True
+
+
+def _append_direct_broadcast_passes(received, candidates, dumps):
+    for overpass in candidates:
+        receivable = True
+        for dump in dumps:
+            if not _adjust_pass_for_dump(overpass, dump):
+                receivable = False
+        if receivable and overpass.seconds() > MIN_PASS * 60:
+            received.append(overpass)
+
+
 def get_terra_aqua_passes(passes, utctime, forward, sat, passlist, satorb, aqua_terra_dumps):
     """Get the Terra/Aqua passes.
 
@@ -640,119 +705,27 @@ def get_terra_aqua_passes(passes, utctime, forward, sat, passlist, satorb, aqua_
            info will be considered.
 
     """
-    instrument = "modis"
+    wallops_coords = (-75.457222, 37.938611, 0)
+    wallops_passes = _dump_station_passes(sat, satorb, utctime, forward, wallops_coords)
 
-    wpcoords = (-75.457222, 37.938611, 0)
-    passlist_wp = satorb.get_next_passes(
-        utctime - timedelta(minutes=30), forward + 1, *wpcoords)
-    wp_passes = [
-        Pass(sat, rtime, ftime, orb=satorb, uptime=uptime, instrument=instrument)
-        for rtime, ftime, uptime in passlist_wp if rtime < ftime
-    ]
+    svalbard_coords = (15.399, 78.228, 0)
+    svalbard_passes = _dump_station_passes(sat, satorb, utctime, forward, svalbard_coords)
+    poker_flat_coords = (-147.43, 65.12, 0.51)
+    poker_flat_passes = _dump_station_passes(sat, satorb, utctime, forward, poker_flat_coords)
 
-    svcoords = (15.399, 78.228, 0)
-    passlist_sv = satorb.get_next_passes(
-        utctime - timedelta(minutes=30), forward + 1, *svcoords)
-    sv_passes = [
-        Pass(sat, rtime, ftime, orb=satorb, uptime=uptime, instrument=instrument)
-        for rtime, ftime, uptime in passlist_sv if rtime < ftime
-    ]
-    pfcoords = (-147.43, 65.12, 0.51)
-    passlist_pf = satorb.get_next_passes(
-        utctime - timedelta(minutes=30), forward + 1, *pfcoords)
-    pf_passes = [
-        Pass(sat, rtime, ftime, orb=satorb, uptime=uptime, instrument=instrument)
-        for rtime, ftime, uptime in passlist_pf if rtime < ftime
-    ]
-
-    aqua_passes = [
-        Pass(sat, rtime, ftime, orb=satorb, uptime=uptime, instrument=instrument)
-        for rtime, ftime, uptime in passlist if rtime < ftime
-    ]
+    broadcast_passes = _modis_passes(sat, passlist, satorb)
 
     dumps = get_aqua_terra_dumps(utctime - timedelta(minutes=30),
                                  utctime + timedelta(hours=forward + 0.5),
                                  satorb, sat, aqua_terra_dumps)
 
-    # remove the known dumps
     for dump in dumps:
-        # print "*", dump.station, dump, dump.max_elev
-        logger.debug("dump from ftp: " + str((dump.station, dump,
-                                              dump.max_elev)))
-        for i, sv_pass in enumerate(sv_passes):
-            if sv_pass.overlaps(dump, timedelta(minutes=40)):
-                sv_elevation = sv_pass.orb.get_observer_look(
-                    sv_pass.uptime, *svcoords)[1]
-                logger.debug("Computed " + str(("SG", sv_pass,
-                                                sv_elevation)))
-                del sv_passes[i]
-        for i, pf_pass in enumerate(pf_passes):
-            if pf_pass.overlaps(dump, timedelta(minutes=40)):
-                pf_elevation = pf_pass.orb.get_observer_look(
-                    pf_pass.uptime, *pfcoords)[1]
-                logger.debug("Computed " + str(("PF", pf_pass,
-                                                pf_elevation)))
-                del pf_passes[i]
-        for i, wp_pass in enumerate(wp_passes):
-            if wp_pass.overlaps(dump, timedelta(minutes=40)):
-                wp_elevation = wp_pass.orb.get_observer_look(
-                    wp_pass.uptime, *wpcoords)[1]
-                logger.debug("Computed " + str(("WP", wp_pass,
-                                                wp_elevation)))
-                del wp_passes[i]
+        logger.debug("dump from ftp: %s", (dump.station, dump, dump.max_elev))
+        _exclude_known_dump(svalbard_passes, dump, svalbard_coords, "SG")
+        _exclude_known_dump(poker_flat_passes, dump, poker_flat_coords, "PF")
+        _exclude_known_dump(wallops_passes, dump, wallops_coords, "WP")
 
-    # sort out dump passes first
-    # between sv an pf, we take the one with the highest elevation if
-    # pf < 20°, pf otherwise
-    # I think wp is also used if sv is the only other alternative
-    used_pf = []
-    for sv_pass in sv_passes:
-        found_pass = False
-        for pf_pass in pf_passes:
-            if sv_pass.overlaps(pf_pass):
-                found_pass = True
-                used_pf.append(pf_pass)
-                sv_elevation = sv_pass.orb.get_observer_look(
-                    sv_pass.uptime, *svcoords)[1]
-                pf_elevation = pf_pass.orb.get_observer_look(
-                    pf_pass.uptime, *pfcoords)[1]
-                if pf_elevation > 20:
-                    dumps.append(pf_pass)
-                elif sv_elevation > pf_elevation:
-                    dumps.append(sv_pass)
-                else:
-                    dumps.append(pf_pass)
-                break
-        if not found_pass:
-            dumps.append(sv_pass)
-
-    for pf_pass in pf_passes:
-        if pf_pass not in used_pf:
-            dumps.append(pf_pass)
+    dumps.extend(_infer_dump_passes(svalbard_passes, poker_flat_passes, svalbard_coords, poker_flat_coords))
 
     passes[sat.name] = []
-    for overpass in aqua_passes:
-        add = True
-        for dump_pass in dumps:
-            if dump_pass.overlaps(overpass):
-                if (dump_pass.uptime < overpass.uptime and
-                        dump_pass.falltime > overpass.risetime):
-                    logger.debug("adjusting " + str(overpass) +
-                                 " to new risetime " +
-                                 str(dump_pass.falltime))
-                    overpass.risetime = dump_pass.falltime
-                    overpass.boundary = SwathBoundary(overpass)
-                elif (dump_pass.uptime >= overpass.uptime and
-                      dump_pass.risetime < overpass.falltime):
-                    logger.debug("adjusting " + str(overpass) +
-                                 " to new falltime " +
-                                 str(dump_pass.risetime))
-                    overpass.falltime = dump_pass.risetime
-                    overpass.boundary = SwathBoundary(overpass)
-                if overpass.falltime <= overpass.risetime:
-                    add = False
-                    logger.debug("skipping " + str(overpass))
-        if add and overpass.seconds() > MIN_PASS * 60:
-            passes[sat.name].append(overpass)
-
-    return
+    _append_direct_broadcast_passes(passes[sat.name], broadcast_passes, dumps)

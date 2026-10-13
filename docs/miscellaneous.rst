@@ -12,11 +12,17 @@ Aqua and Terra dumps
 During the time when the EOS satellites make their global dump there is no
 Direct Broadcast available for Direct Readout users. In order to disregard the
 scheduling of local reception of data which will not be available due to these
-restrictions the NASA Direct Readout Lab publish Terra and Aqua Direct
-Broadcast Downlink Scheduling Information regularly. The Pytroll-schedule take
-these reports into account when deriving the local schedule.
+restrictions, Pytroll-schedule takes the NASA Direct Readout Laboratory's
+Terra and Aqua downlink scheduling reports into account when deriving the
+local schedule.
 
-The ftp adressses are:
+Although DRL software development has moved to archive status, its current
+ancillary data service continues to operate via FTP, as described on the
+`DRL website <https://directreadout.sci.gsfc.nasa.gov/>`_.
+Reports may contain only a header when no contacts are listed; an empty report
+does not by itself establish that the service has been discontinued.
+
+The FTP addresses are:
   - ftp://is.sci.gsfc.nasa.gov/ancillary/ephemeris/schedule/aqua/downlink/
   - ftp://is.sci.gsfc.nasa.gov/ancillary/ephemeris/schedule/terra/downlink/
 

@@ -205,3 +205,12 @@ A few examples for satellite sections, assigning scores to each satellite.
 
 ``day``
 	Weight value for satellite swath parts on the day-side of the terminator.
+
+``trimmable``
+	Optional, ``false`` by default. When two passes of satellites both marked
+	``trimmable: true`` overlap in time, but only in the parts of the passes
+	outside the area of interest, the passes are shortened so that both can be
+	received: the overlap is shared equally, without cutting anything covering
+	the area of interest, and with the scheduling delay in between. When the
+	passes overlap over the area of interest, nothing is trimmed and the
+	scheduler picks one of them as usual.

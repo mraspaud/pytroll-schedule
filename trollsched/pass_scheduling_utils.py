@@ -36,9 +36,10 @@ class Satellite:
     """The Satellite class holding information on its score, name and designator."""
 
     def __init__(self, name, day, night,
-                 schedule_name=None, international_designator=None):
+                 schedule_name=None, international_designator=None, trimmable=False):
         """Initialize the satellite."""
         self.name = name
+        self.trimmable = trimmable
         self.international_designator = international_designator
         self.score = SatScore(day, night)
         self.schedule_name = schedule_name or name

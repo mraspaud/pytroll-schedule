@@ -63,6 +63,22 @@ Usage of the schedule script::
 	  -g, --graph           save graph info
 
 
+.. warning::
+
+   Coordinated scheduling writes local pickle artifacts, and ``--multiproc``
+   loads the per-station ``allpasses.<station>.pkl`` results. The output
+   directory must be trusted and must not be writable by untrusted users.
+   Do not supply or reuse pickle artifacts from untrusted sources: loading
+   a malicious pickle can execute arbitrary code.
+
+.. warning::
+
+   Legacy ``ftp://`` output URLs are retained for compatibility. FTP uploads
+   send credentials and schedule contents without encryption; deployments
+   using them must explicitly accept that risk. For sensitive transfers,
+   write the output locally and use a separate encrypted transfer mechanism.
+
+
 Script to create instrument swath outlines in shapefile format for all passes scheduled
 ---------------------------------------------------------------------------------------
 

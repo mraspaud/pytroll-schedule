@@ -22,16 +22,23 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 """Test the schedule module."""
+import datetime as dt
 import os
 import tempfile
-import datetime as dt
 from unittest.mock import patch
 
 import pytest
 import yaml
 
 from trollsched.satpass import get_aqua_terra_dumps, get_metopa_passes, get_next_passes
-from trollsched.schedule import build_filename, conflicting_passes, fermia, fermib, get_passes_from_xml_file, run
+from trollsched.schedule import (
+    build_filename,
+    conflicting_passes,
+    coverage_weight,
+    get_passes_from_xml_file,
+    overlap_penalty_weight,
+    run,
+)
 
 
 class TestTools:
@@ -58,8 +65,8 @@ class TestUtils:
 
     def test_fermi(self):
         """Test the fermi formula."""
-        assert fermia(0.25) == 0.875
-        assert fermib(0.25) == 0.5
+        assert coverage_weight(0.25) == 0.875
+        assert overlap_penalty_weight(0.25) == 0.5
 
     def test_build_filename(self):
         """Test building filename."""
@@ -318,16 +325,14 @@ class TestAll:
 
     def test_write_xml(self, tmp_path):
         """Test that writing pass list following EUMETSAT xml format works as expected."""
-        from datetime import timezone
-
         import defusedxml.ElementTree as ET
 
         from trollsched.writers import generate_xml_file
 
         with open(tmp_path / "tle.file", "wt") as f:
             f.write(self.satellites[0].upper() + "\n")
-            f.write(self.tles[self.satellites[0]]['line1'] + "\n")
-            f.write(self.tles[self.satellites[0]]['line2'] + "\n")
+            f.write(self.tles[self.satellites[0]]["line1"] + "\n")
+            f.write(self.tles[self.satellites[0]]["line2"] + "\n")
             f.close()
 
             allpasses = get_next_passes(self.satellites, self.utctime,
@@ -343,31 +348,29 @@ class TestAll:
             # Read back to test content
             tree = ET.parse(written_test_file)
             root = tree.getroot()
-            assert root.find('properties/project').text == 'Pytroll'
-            assert root.find('properties/type').text == 'request'
-            assert root.find('properties/station').text == 'id'
-            assert root.find('properties/antenna').text is None
-            assert root.find('properties/requested-by').text == 'center_id'
-            assert root.find('properties/file-start').text == '2018-11-28-10:00:00'
-            assert root.find('properties/file-end').text == '2018-11-28-15:00:00'
-            expected_aos = ['20181128105342', '20181128123444']
-            expected_los = ['20181128110906', '20181128124925']
+            assert root.find("properties/project").text == "Pytroll"
+            assert root.find("properties/type").text == "request"
+            assert root.find("properties/station").text == "id"
+            assert root.find("properties/antenna").text is None
+            assert root.find("properties/requested-by").text == "center_id"
+            assert root.find("properties/file-start").text == "2018-11-28-10:00:00"
+            assert root.find("properties/file-end").text == "2018-11-28-15:00:00"
+            expected_aos = ["20181128105342", "20181128123444"]
+            expected_los = ["20181128110906", "20181128124925"]
             for overpass, exp_aos, exp_los in zip(root.iter("pass"), expected_aos, expected_los):
                 assert overpass.attrib["aos"] == exp_aos
                 assert overpass.attrib["los"] == exp_los
 
     def test_write_metno_xml(self, tmp_path):
         """Test that writing pass list in metno xml format work as expected."""
-        from datetime import timezone
-
         import defusedxml.ElementTree as ET
 
         from trollsched.writers import generate_metno_xml_file
 
         with open(tmp_path / "tle.file", "wt") as f:
             f.write(self.satellites[0].upper() + "\n")
-            f.write(self.tles[self.satellites[0]]['line1'] + "\n")
-            f.write(self.tles[self.satellites[0]]['line2'] + "\n")
+            f.write(self.tles[self.satellites[0]]["line1"] + "\n")
+            f.write(self.tles[self.satellites[0]]["line2"] + "\n")
             f.close()
 
             allpasses = get_next_passes(self.satellites, self.utctime,
@@ -380,14 +383,14 @@ class TestAll:
             # Read back to test content
             tree = ET.parse(written_test_file)
             root = tree.getroot()
-            assert root.find('properties/project').text == 'Pytroll'
-            assert root.find('properties/type').text == 'report'
-            assert root.find('properties/station').text == 'id'
-            assert root.find('properties/requested-by').text == 'center_id'
-            assert root.find('properties/file-start').text == '2018-11-28T10:00:00'
-            assert root.find('properties/file-end').text == '2018-11-28T15:00:00'
-            expected_aos = ['20181128105342', '20181128123444']
-            expected_los = ['20181128110906', '20181128124925']
+            assert root.find("properties/project").text == "Pytroll"
+            assert root.find("properties/type").text == "report"
+            assert root.find("properties/station").text == "id"
+            assert root.find("properties/requested-by").text == "center_id"
+            assert root.find("properties/file-start").text == "2018-11-28T10:00:00"
+            assert root.find("properties/file-end").text == "2018-11-28T15:00:00"
+            expected_aos = ["20181128105342", "20181128123444"]
+            expected_los = ["20181128110906", "20181128124925"]
             for overpass, exp_aos, exp_los in zip(root.iter("pass"), expected_aos, expected_los):
                 assert overpass.attrib["aos"] == exp_aos
                 assert overpass.attrib["los"] == exp_los
@@ -410,47 +413,47 @@ euron1 = """euron1:
 """
 
 
+def run_schedule(tmp_path, tle, satellites, start_time, forward=12, coords=(16, 58, 0), extra_args=()):
+    """Run the schedule command on *satellites* ({name: config}) and return the request xml file."""
+    config_file = tmp_path / "config.yaml"
+    tle_file = tmp_path / "test.tle"
+    area_file = tmp_path / "areas.yaml"
+    sched_file = tmp_path / "schedule.xml"
+
+    area_file.write_text(euron1)
+    tle_file.write_text(tle)
+
+    longitude, latitude, altitude = coords
+    config = dict(default=dict(station=["nrk"],
+                               forward=forward,
+                               start=0,
+                               center_id="SMHI"),
+                  stations=dict(nrk=dict(name="nrk",
+                                         longitude=longitude,
+                                         latitude=latitude,
+                                         altitude=altitude,
+                                         satellites=list(satellites),
+                                         area="euron1",
+                                         area_file=os.fspath(area_file))),
+                  pattern=dict(dir_output=os.fspath(tmp_path),
+                               file_xml=os.fspath(sched_file)),
+                  satellites=satellites)
+    config_file.write_text(yaml.dump(config))
+
+    run(["-c", os.fspath(config_file), "-x", "-t", os.fspath(tle_file),
+         "--start-time", start_time, *extra_args])
+    return sched_file
+
+
 def test_pyorbitals_platform_name(tmp_path):
     """Test that using pyorbital's platform name allows spurious names in the TLE data."""
     spurious_tle = ("NOAA 20 (JPSS-1)\n"
                     "1 43013U 17073A   24093.57357837  .00000145  00000+0  86604-4 0  9999\n"
                     "2 43013  98.7039  32.7741 0007542 324.8026  35.2652 14.21254587330172\n")
+    satellites = {"noaa-20": dict(schedule_name="noaa20", international_designator="43013", night=0.4, day=0.9)}
 
-    config_file = tmp_path / "config.yaml"
-    tle_file = tmp_path / "test.tle"
-    area_file = tmp_path / "areas.yaml"
-    sched_file = tmp_path / "mysched.xml"
+    sched_file = run_schedule(tmp_path, spurious_tle, satellites, "2024-03-30T15:00")
 
-    with open(area_file, "w") as fd:
-        fd.write(euron1)
-
-    with open(tle_file, "w") as fd:
-        fd.write(spurious_tle)
-
-    config = dict(default=dict(station=["nrk"],
-                               forward=12,
-                               start=0,
-                               center_id="SMHI"),
-                  stations=dict(nrk=dict(name="nrk",
-                                         longitude=16,
-                                         latitude=58,
-                                         altitude=0,
-                                         satellites=["noaa-20"],
-                                         area="euron1",
-                                         area_file=os.fspath(area_file))),
-
-                  pattern=dict(dir_output=os.fspath(tmp_path),
-                               file_xml=os.fspath(sched_file)),
-                  satellites={"noaa-20": dict(schedule_name="noaa20",
-                                              international_designator="43013",
-                                              night=0.4,
-                                              day=0.9)}
-                  )
-
-    with open(config_file, "w") as fd:
-        fd.write(yaml.dump(config))
-
-    run(["-c", os.fspath(config_file), "-x", "-t", os.fspath(tle_file), "-s", "2024-03-30T15:00"])
     assert sched_file in tmp_path.iterdir()
 
 
@@ -469,56 +472,45 @@ def test_schedule_avoid(tmp_path):
            "NOAA 20\n"
            "1 37849U 11061A   24128.72979065  .00000000  00000+0  12832-3 0 00014\n"
            "2 37849  98.7205  67.3215 0001498  76.6175 303.3589 14.19560637649138\n")
-
-    config_file = tmp_path / "config.yaml"
-    tle_file = tmp_path / "test.tle"
-    area_file = tmp_path / "areas.yaml"
-    sched_file = tmp_path / "sched-with-avoid.xml"
+    satellites = {"suomi npp": dict(schedule_name="suomi npp", international_designator="37849", night=0.4, day=0.9),
+                  "noaa 20": dict(schedule_name="noaa 20", international_designator="99999", night=0.4, day=0.9)}
     avoid_file = tmp_path / "avoid.xml"
+    avoid_file.write_text(avoid)
 
-    with open(area_file, "w") as fd:
-        fd.write(euron1)
-
-    with open(tle_file, "w") as fd:
-        fd.write(tle)
-
-    with open(avoid_file, "w") as fd:
-        fd.write(avoid)
-
-    config = dict(default=dict(station=["nrk"],
-                               forward=12,
-                               start=0,
-                               center_id="SMHI"),
-                  stations=dict(nrk=dict(name="nrk",
-                                         longitude=16,
-                                         latitude=58,
-                                         altitude=0,
-                                         satellites=["suomi npp", "noaa 20"],
-                                         area="euron1",
-                                         area_file=os.fspath(area_file))),
-
-                  pattern=dict(dir_output=os.fspath(tmp_path),
-                               file_xml=os.fspath(sched_file)),
-                  satellites={"suomi npp": dict(schedule_name="suomi npp",
-                                                international_designator="37849",
-                                                night=0.4,
-                                                day=0.9),
-                              "noaa 20": dict(schedule_name="noaa 20",
-                                              international_designator="99999",
-                                              night=0.4,
-                                              day=0.9)}
-                  )
-
-    with open(config_file, "w") as fd:
-        fd.write(yaml.dump(config))
-
-    start_time = dt.datetime(2024, 5, 8, 0, 0, 0)
-    run(["-c", os.fspath(config_file), "-x", "-v", "-t", os.fspath(tle_file),
-         "--start-time", start_time.strftime("%Y-%m-%dT%H:%M:%S"),
-         "--avoid", os.fspath(avoid_file)])
-    assert sched_file in tmp_path.iterdir()
+    sched_file = run_schedule(tmp_path, tle, satellites, "2024-05-08T00:00:00",
+                              extra_args=["-v", "--avoid", os.fspath(avoid_file)])
 
     sched_file_passes = get_passes_from_xml_file([sched_file])
-    avoid_file_passes = get_passes_from_xml_file([avoid_file])
-    for avoid_pass in avoid_file_passes:
+    for avoid_pass in get_passes_from_xml_file([avoid_file]):
         assert avoid_pass not in sched_file_passes
+
+
+def test_schedule_golden_master(tmp_path, november_2025_tle_file):
+    """Test that a real 6-hour schedule over euron1 stays the same."""
+    satellites = {"NOAA-21": dict(schedule_name="noaa21", night=0.4, day=0.9),
+                  "fengyun 3f": dict(schedule_name="fy3f", night=0.2, day=0.8),
+                  "metop-sga1": dict(schedule_name="sga1", night=0.7, day=0.5),
+                  "aws": dict(schedule_name="aws-pfm", night=0.8, day=0.8)}
+
+    sched_file = run_schedule(tmp_path, november_2025_tle_file.read_text(), satellites, "2025-11-21T04:00:00",
+                              forward=6, coords=(16.148649, 58.581844, 0.052765))
+
+    scheduled = [str(overpass) for overpass in get_passes_from_xml_file([sched_file])]
+    assert scheduled == ["noaa21 2025-11-21T04:35:20 2025-11-21T04:46:16",
+                         "sga1 2025-11-21T06:04:20 2025-11-21T06:11:26",
+                         "noaa21 2025-11-21T06:14:09 2025-11-21T06:23:09",
+                         "aws-pfm 2025-11-21T07:12:21 2025-11-21T07:17:16",
+                         "sga1 2025-11-21T07:43:02 2025-11-21T07:57:11",
+                         "aws-pfm 2025-11-21T08:46:16 2025-11-21T08:58:04",
+                         "fy3f 2025-11-21T09:33:49 2025-11-21T09:49:17"]
+
+
+def test_schedule_receives_both_trimmable_passes_overlapping_outside_the_area(tmp_path, november_2025_tle_file):
+    """Test that trimmable passes overlapping outside the area are both scheduled, after trimming."""
+    satellites = {"fengyun 3f": dict(schedule_name="fy3f", night=0.2, day=0.8, trimmable=True),
+                  "metop-sga1": dict(schedule_name="sga1", night=0.7, day=0.5, trimmable=True)}
+
+    sched_file = run_schedule(tmp_path, november_2025_tle_file.read_text(), satellites, "2025-11-21T07:30:00",
+                              forward=1, coords=(16.148649, 58.581844, 0.052765))
+
+    assert [overpass.satellite.name for overpass in get_passes_from_xml_file([sched_file])] == ["sga1", "fy3f"]
