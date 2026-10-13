@@ -31,8 +31,8 @@ def test_in_area_window_of_a_pass_over_the_area_all_along_is_the_whole_pass(nove
     assert in_area_window(sga1, EURON1) == (sga1.risetime, sga1.falltime)
 
 
-def test_coverage_loss_allowance_shortens_the_required_reception_window(november_2025_tle_file):
-    """A configured loss permits dropping either end of an otherwise fully in-area pass."""
+def test_coverage_loss_allowance_relaxes_reception_time_limits(november_2025_tle_file):
+    """A configured loss permits later rise and earlier fall limits for a fully in-area pass."""
     sga1 = create_pass("METOP-SGA1", "avhrr", dt.datetime(2025, 11, 21, 9, 29), dt.datetime(2025, 11, 21, 9, 31),
                        str(november_2025_tle_file))
     sga1.satellite.max_coverage_loss = 25

@@ -1,4 +1,4 @@
-"""Trimming of overlapping passes, so that both can be received."""
+"""Trimming overlapping passes within their coverage-loss limits."""
 import datetime as dt
 
 from trollsched import MIN_PASS
@@ -53,7 +53,7 @@ def _last_time_holding(condition, holds, fails):
 
 
 def trim_associated_overlaps(passes, area_of_interest, delay, shortest_pass=dt.timedelta(minutes=MIN_PASS)):
-    """Trim overlapping passes outside *area_of_interest*, so they can all be received."""
+    """Trim associated overlapping passes within their configured area-coverage allowances."""
     passes = sorted(passes, key=lambda overpass: overpass.risetime)
     original_passes = passes.copy()
     for index in range(len(passes) - 1):
