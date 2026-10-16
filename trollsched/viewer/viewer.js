@@ -150,6 +150,14 @@ function draw() {
 }
 
 // ---------------------------------------------------------------- pass list
+function stripes(cols) { // CSS equivalent of the striped SVG pattern
+  return `repeating-linear-gradient(45deg,${cols.map((c, i) => `${c} ${i * 3}px ${(i + 1) * 3}px`).join(",")})`;
+}
+function swatch(p) {
+  if (p.un) return "var(--row)";
+  if (p.ants.length > 1) return stripes(p.ants.slice().sort().map(a => antColor[a]));
+  return passColor(p.ants[0], p.area_pct);
+}
 function drawList() {
   const rows = passes.filter(p => p.e > t0 && p.s < t1).sort((a, b) => a.s - b.s);
   const hasArea = passes.some(p => p.area_pct !== undefined);
@@ -158,7 +166,7 @@ function drawList() {
   for (const p of rows) {
     const i = passes.indexOf(p), dur = Math.round(p.e - p.s);
     const note = p.un ? "not scheduled" : p.fs !== undefined ? "trimmed" : p.conflict ? "overlap" : "";
-    o += `<tr class="${p.un ? "un" : ""}" data-i="${i}"><td><i class="sw" style="background:${p.un ? "var(--row)" : fillFor(p).startsWith("url") ? antColor[p.ants[0]] : fillFor(p)}"></i>${esc(p.name)}</td>` +
+    o += `<tr class="${p.un ? "un" : ""}" data-i="${i}"><td><i class="sw${p.un ? " un" : ""}" style="background:${swatch(p)}"></i>${esc(p.name)}</td>` +
       `<td>${esc(p.un ? "–" : p.ants.join(" + "))}</td><td>${ymd(p.s)}</td><td>${hhmmss(p.s)}</td><td>${hhmmss(p.e)}</td>` +
       `<td>${Math.floor(dur / 60)}:${pad(dur % 60)}</td><td>${p.orbit ?? ""}</td><td>${p.dir ? p.dir[0].toUpperCase() : ""}</td>` +
       `<td>${p.max_el !== undefined ? p.max_el + "°" : ""}</td>${hasArea ? `<td>${p.area_pct !== undefined ? p.area_pct.toFixed(0) + " %" : ""}</td>` : ""}` +
@@ -170,7 +178,7 @@ function drawList() {
 // ---------------------------------------------------------------- legend, header, controls
 document.getElementById("legend").innerHTML =
   antennas.map(a => `<span><i class="sw" style="background:${antColor[a]}"></i>${esc(a)}</span>`).join("") +
-  (antennas.length > 1 ? `<span><i class="sw" style="background:repeating-linear-gradient(45deg,${antennas.map((a, i) => `${antColor[a]} ${i * 3}px ${(i + 1) * 3}px`).join(",")})"></i>several antennas</span>` : "") +
+  (antennas.length > 1 ? `<span><i class="sw" style="background:${stripes(antennas.map(a => antColor[a]))}"></i>several antennas</span>` : "") +
   `<span><i class="sw conflict"></i>overlap on one antenna</span>` +
   (passes.some(p => p.un) ? `<span><i class="sw un"></i>not scheduled</span>` : "") +
   (passes.some(p => p.area_pct !== undefined) ? `<span class="hint">darker = more of the area covered</span>` : "");
