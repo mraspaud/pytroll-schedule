@@ -1,0 +1,107 @@
+"""Tests for building the viewer page from a scheduling run."""
+
+from datetime import datetime, timedelta
+
+import pytest
+
+from trollsched.tests.test_viewer import NRK, FakeBoundary, FakePass, _fake_subsolar  # noqa: F401
+from trollsched.viewer import geo, station
+from trollsched.viewer.records import ScheduledEntry
+
+T0 = datetime(2026, 10, 16, 9, 0, 0)
+
+
+class FakeStation:
+    """Station stand-in."""
+
+    def __init__(self, antenna="meos"):
+        """Set up a station near Norrköping with no usable area boundary."""
+        self.id = "nrk"
+        self.coords = NRK
+        self.antenna = antenna
+        self.area = None
+        self.local_horizon = 0
+
+
+def _trimmed(overpass, start, end):
+    result = FakePass(overpass.satellite.name, start, end)
+    result.original = overpass
+    return result
+
+
+def test_scheduled_entries_use_received_passes_only():
+    """Only passes flagged as received become entries, on the station's antenna."""
+    received = FakePass("noaa20", T0, T0 + timedelta(minutes=12))
+    received.rec = True
+    skipped = FakePass("fy3d", T0 + timedelta(hours=1), T0 + timedelta(hours=1, minutes=12))
+    skipped.rec = False
+    assert station.scheduled_entries([received, skipped], "meos") == [
+        ScheduledEntry("noaa20", "meos", T0, T0 + timedelta(minutes=12))]
+
+
+def test_untrimmed_returns_originals_once():
+    """Trimmed passes resolve to their original, and an original seen twice is kept once."""
+    original = FakePass("fy3f", T0, T0 + timedelta(minutes=12))
+    first = _trimmed(original, T0, T0 + timedelta(minutes=8))
+    second = _trimmed(original, T0 + timedelta(minutes=2), T0 + timedelta(minutes=12))
+    other = FakePass("noaa20", T0 + timedelta(hours=1), T0 + timedelta(hours=1, minutes=12))
+    assert station.untrimmed([first, second, other]) == [original, other]
+
+
+def test_extra_visible_passes_only_for_satellites_without_passes(monkeypatch, tmp_path):
+    """Satellites that only appear in avoid lists get their passes computed from the TLEs."""
+    computed = []
+    monkeypatch.setattr(station, "load_tles", lambda path: "lookup")
+    monkeypatch.setattr(station, "visible_passes",
+                        lambda sats, start, end, coords, lookup, horizon: computed.append(sorted(sats)) or ["pass"])
+    tle = tmp_path / "tle.txt"
+    tle.write_text("")
+    full = [FakePass("noaa20", T0, T0 + timedelta(minutes=12))]
+    entries = [ScheduledEntry("noaa20", "cgi", T0, T0 + timedelta(minutes=12)),
+               ScheduledEntry("npp", "cgi", T0, T0 + timedelta(minutes=12)),
+               ScheduledEntry("NOAA-20", "cgi", T0, T0 + timedelta(minutes=12))]
+    result = station.extra_visible_passes(full, entries, (T0, T0 + timedelta(days=1)), NRK, str(tle))
+    assert result == ["pass"]
+    assert computed == [["npp"]]
+
+
+def test_extra_visible_passes_without_tle_file_warns(caplog):
+    """Without a TLE file, avoid-only satellites are skipped with a warning."""
+    entries = [ScheduledEntry("npp", "cgi", T0, T0 + timedelta(minutes=12))]
+    assert station.extra_visible_passes([], entries, (T0, T0 + timedelta(days=1)), NRK, None) == []
+    assert "npp" in caplog.text
+
+
+def test_area_outline_from_boundary_contour():
+    """An area with a boundary gives a rounded lon/lat ring; without one, None."""
+    class Area:
+        def boundary(self, frequency):
+            return type("B", (), {"contour": lambda self: ([0.123, 10.456, 10], [50, 50, 60.789])})()
+
+    assert station.area_outline(Area()) == [[0.12, 50.0], [10.46, 50.0], [10.0, 60.79]]
+    assert station.area_outline(None) is None
+
+
+@pytest.mark.usefixtures("_fake_subsolar")
+def test_station_page_combines_station_schedule_and_avoid_lists(tmp_path, monkeypatch):
+    """The page holds the station's own passes, the avoid list's antenna, and the unscheduled rest."""
+    monkeypatch.setattr(geo, "load_coastlines", lambda path=None, step=1: [])
+    monkeypatch.setattr(geo, "sun_elevation_series", lambda *args, **kwargs: (T0, 900, [0.0]))
+    avoid = tmp_path / "cgi.xml"
+    avoid.write_text(
+        "<acquisition-schedule><properties><antenna>cgi</antenna>"
+        "<file-start>2026-10-16-09:00:00</file-start><file-end>2026-10-16-12:00:00</file-end></properties>"
+        '<pass satellite="noaa21" start-time="2026-10-16-10:00:00" end-time="2026-10-16-10:12:00" />'
+        "</acquisition-schedule>")
+    own = FakePass("fy3d", T0, T0 + timedelta(minutes=12))
+    own.rec = True
+    other = FakePass("noaa21", T0 + timedelta(hours=1), T0 + timedelta(hours=1, minutes=12))
+    other.rec = False
+    left_out = FakePass("metop-b", T0 + timedelta(hours=2), T0 + timedelta(hours=2, minutes=12))
+    left_out.rec = False
+    passes = [own, other, left_out]
+    page = station.station_page(FakeStation(), passes, passes, [str(avoid)], (T0, T0 + timedelta(hours=3)), 60)
+    assert '"ant":"meos"' in page
+    assert '"ant":"cgi"' in page
+    assert '"sat":"metop-b"' in page
+    assert '"un":1' in page

@@ -201,13 +201,42 @@ def test_build_records_keeps_entries_without_visibility():
     assert "cov" not in record
 
 
+class FakeArea:
+    """Area of interest stand-in: a lon/lat box with a spherical polygon."""
+
+    def __init__(self, lon0, lon1, lat0, lat1):
+        """Build the polygon from the box corners."""
+        from pyresample.spherical import SphPolygon
+        # clockwise in lon/lat, which is what pyresample needs for the area to be the inside
+        self.poly = SphPolygon(np.radians(np.array([[lon0, lat0], [lon0, lat1], [lon1, lat1], [lon1, lat0]])))
+
+
+def test_planar_fraction_of_contained_and_half_covered_area():
+    """A swath around the whole area covers 100 %, one over its western half about 50 %."""
+    area = FakeArea(0, 20, 50, 60)
+    assert records.planar_fraction([[-5, 45], [25, 45], [25, 65], [-5, 65]], area) == pytest.approx(1.0, abs=0.01)
+    assert records.planar_fraction([[-5, 45], [10, 45], [10, 65], [-5, 65]], area) == pytest.approx(0.5, abs=0.02)
+
+
 @pytest.mark.usefixtures("_fake_subsolar")
 def test_build_records_includes_area_coverage():
-    """With an area of interest, the covered percentage is included."""
-    overpass = FakePass("noaa20", T0, T0 + timedelta(minutes=12), coverage=0.25)
+    """With an area of interest, the covered percentage is included, from the swath polygon."""
+    area = FakeArea(-10, 10, 40, 70)
+    overpass = FakePass("noaa20", T0, T0 + timedelta(minutes=12))
     entry = ScheduledEntry("noaa20", "cgi", T0, T0 + timedelta(minutes=12))
-    (record,) = build_records([overpass], [entry], NRK, area=object())
-    assert record["area_pct"] == 25.0
+    (record,) = build_records([overpass], [entry], NRK, area=area)
+    assert record["area_pct"] == pytest.approx(100.0, abs=1)
+
+
+def test_area_fraction_prefers_the_scheduler_cache():
+    """When the scheduler already intersected the pass with the area, that result is reused."""
+    area = FakeArea(-10, 10, 40, 70)
+    overpass = FakePass("noaa20", T0, T0 + timedelta(minutes=12))
+    overpass.score[area] = (FakeArea(-10, 10, 40, 55).poly, 0.5)
+    expected = (np.sin(np.radians(55)) - np.sin(np.radians(40))) / (np.sin(np.radians(70)) - np.sin(np.radians(40)))
+    assert records.area_fraction(overpass, area) == pytest.approx(expected, abs=0.01)
+    overpass.score[area] = (None, 0)
+    assert records.area_fraction(overpass, area) == 0.0
 
 
 def test_read_schedule_reads_antenna_and_span(tmp_path):

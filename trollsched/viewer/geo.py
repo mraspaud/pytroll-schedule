@@ -86,6 +86,17 @@ def _share(total, weights):
     return counts
 
 
+def densify_ring(ring, per_edge):
+    """Insert *per_edge* - 1 great-circle points on every edge of a closed lon/lat ring."""
+    points = xyz([p[0] for p in ring], [p[1] for p in ring])
+    out = []
+    for index in range(len(points)):
+        a, b = points[index], points[(index + 1) % len(points)]
+        for step in range(per_edge):
+            out.append(lonlat(slerp(a, b, step / per_edge)))
+    return out
+
+
 def swath_track(boundary):
     """Get the swath centre line as ``[[lon, lat], ...]`` from first scan to last scan."""
     top = xyz(boundary.top_lons, boundary.top_lats)

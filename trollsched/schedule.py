@@ -123,6 +123,8 @@ class Station:
 
         _publish_xml(sched, reception_passes, start_time, pattern_args, self.id, self.antenna)
 
+        _write_station_viewer(sched, self, allpasses, reception_passes, start_time, pattern_args, tle_file)
+
         _persist_station_results(sched, graph, labels, allpasses, pattern_args, self.id)
 
         return graph, allpasses
@@ -407,6 +409,25 @@ def _write_station_metno_reports(scheduler, passes, selected, station, start_tim
             generate_metno_xml_file(build_filename(pattern, scheduler.patterns, pattern_args),
                                     report_passes, station.coords, start, end, station.id, scheduler.center_id,
                                     report_mode=True)
+
+
+def _write_station_viewer(scheduler, station, allpasses, reception_passes, start_time, pattern_args, tle_file):
+    if not scheduler.opts.html:
+        return
+    from trollsched.viewer.station import station_page
+
+    patterns = dict(scheduler.patterns)
+    patterns.setdefault("file_html", "{dir_output}/{date}-{time}-schedule-{station}.html")
+    filename = build_filename("file_html", patterns, pattern_args)
+    span = (start_time + timedelta(hours=scheduler.start), start_time + timedelta(hours=scheduler.forward))
+    page = station_page(station, allpasses, reception_passes, scheduler.opts.avoid, span,
+                        timedelta(seconds=scheduler.opts.delay), tle_file=tle_file,
+                        coastlines_file=patterns.get("file_coastlines"),
+                        title=f"{station.id} pass schedule {span[0]:%Y-%m-%d} → {span[1]:%Y-%m-%d}",
+                        sources=[os.path.basename(f) for f in scheduler.opts.avoid or []])
+    with open(filename, "w", encoding="utf-8") as stream:
+        stream.write(page)
+    logger.info("Generated %s", filename)
 
 
 def _persist_station_results(scheduler, graph, labels, passes, pattern_args, station_id):
@@ -726,14 +747,17 @@ def parse_args(args=None):
                             help="generate a MEOS schedule file")
     group_outp.add_argument("--metno-xml", action="store_true",
                             help="generate a METNO xml pass data file")
+    group_outp.add_argument("--html", action="store_true",
+                            help="generate an interactive HTML page of the schedule (pattern 'file_html')")
     opts = parser.parse_args(args)
 
     if (not opts.config) and (not (opts.lon or opts.lat or opts.alt)):
         parser.error("Coordinates must be provided in the absence of "
                      "configuration file.")
 
-    if not (opts.xml or opts.scisys or opts.report or opts.metno_xml or opts.meos):
-        parser.error("No output specified, use '--scisys', '-x/--xml', '-r/--report', '--meos', or '--metno-xml'")
+    if not (opts.xml or opts.scisys or opts.report or opts.metno_xml or opts.meos or opts.html):
+        parser.error("No output specified, use '--scisys', '-x/--xml', '-r/--report', '--meos', '--metno-xml' "
+                     "or '--html'")
 
     return opts
 

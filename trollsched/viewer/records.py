@@ -1,14 +1,18 @@
 """Turn passes and acquisition schedules into the records the viewer page displays."""
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from typing import Any
+
+import numpy as np
 
 from trollsched.viewer import geo
 
 logger = logging.getLogger(__name__)
 
 COVERAGE_POINTS = 16
+AREA_POLYGON_POINTS = 48
 TRIM_TOLERANCE = timedelta(seconds=5)
 
 DISPLAY_NAMES = {"npp": "NPP", "aws-pfm": "AWS-PFM"}
@@ -22,6 +26,7 @@ class ScheduledEntry:
     antenna: str
     start: datetime
     end: datetime
+    overpass: Any = field(default=None, compare=False, repr=False)  # the scheduler's own Pass, when known
 
     def overlaps(self, start, end):
         """Check whether this entry overlaps the (start, end) window."""
@@ -49,6 +54,43 @@ def timestamp(utctime):
     return utctime.replace(tzinfo=timezone.utc).timestamp()
 
 
+def area_fraction(overpass, area, npoints=AREA_POLYGON_POINTS):
+    """Get the fraction of *area* covered by *overpass*.
+
+    The scheduler caches the intersection it computed when scoring the pass;
+    that is used when present.  Otherwise the fraction is computed with
+    shapely in an equal-area projection centred on the area, which is far
+    faster than the spherical intersection and accurate to well under a percent.
+    """
+    cached = getattr(overpass, "score", {})
+    if area in cached:
+        coverage = cached[area][0]
+        return 0.0 if coverage is None else coverage.area() / area.poly.area()
+    swath = geo.resample_boundary(overpass.boundary, npoints)
+    return planar_fraction(swath, area)
+
+
+def planar_fraction(swath, area):
+    """Fraction of *area* covered by the lon/lat ring *swath*, in a Lambert azimuthal equal-area projection."""
+    from pyproj import Transformer
+    from shapely.geometry import Polygon
+    from shapely.validation import make_valid
+
+    outline = np.degrees(area.poly.vertices)
+    centre = geo.lonlat(geo.xyz(outline[:, 0], outline[:, 1]).mean(axis=0))
+    transformer = Transformer.from_crs("EPSG:4326", f"+proj=laea +lon_0={centre[0]} +lat_0={centre[1]} +ellps=sphere",
+                                       always_xy=True)
+
+    def project(ring):
+        dense = geo.densify_ring(ring, 6)
+        return make_valid(Polygon(zip(*transformer.transform([p[0] for p in dense], [p[1] for p in dense]))))
+
+    area_polygon = project([list(p) for p in outline])
+    if area_polygon.area == 0:
+        return 0.0
+    return project(swath).intersection(area_polygon).area / area_polygon.area
+
+
 def pass_geometry(overpass, coords, area=None, npoints=COVERAGE_POINTS):
     """Compute the orbit number, swath, direction and look angles of a pass."""
     orb = overpass.orb
@@ -68,7 +110,7 @@ def pass_geometry(overpass, coords, area=None, npoints=COVERAGE_POINTS):
         return result
     if area is not None:
         try:
-            result["area_pct"] = round(100 * overpass.area_coverage(area), 1)
+            result["area_pct"] = round(100 * area_fraction(overpass, area), 1)
         except Exception as err:  # noqa: BLE001
             logger.warning("No area coverage for %s %s: %s", schedule_name(overpass), overpass.risetime, err)
     return result
@@ -110,7 +152,7 @@ def build_records(full_passes, entries, coords, station="", area=None, delay=tim
             matched.add(entry)
             record = _base_record(overpass, entry.start, entry.end, station)
             record["ant"] = entry.antenna
-            received = trimmed(overpass, entry.start, entry.end)
+            received = entry.overpass or trimmed(overpass, entry.start, entry.end)
             record.update(pass_geometry(received, coords, area, npoints))
             cut = max(entry.start - overpass.risetime, overpass.falltime - entry.end)
             if cut > tolerance:

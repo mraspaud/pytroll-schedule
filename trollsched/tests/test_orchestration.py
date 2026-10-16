@@ -216,3 +216,18 @@ def test_non_xml_station_products_do_not_publish_requests(flag, filename, statio
     assert transferred == []
     assert not (tmp_path / "one-request.xml").exists()
     assert (tmp_path / filename).stat().st_size > 0
+
+
+def test_station_writes_html_viewer(station_setup, tmp_path, monkeypatch):
+    """With --html, a self-contained page with the station's passes is written."""
+    station, scheduler, start = station_setup
+    scheduler.opts = parse_args(["-c", "unused", "--html"])
+    scheduler.opts.output_dir = str(tmp_path)
+    scheduler.opts.comb = False
+    scheduler.patterns["file_html"] = str(tmp_path / "{station}.html")
+    monkeypatch.setattr("trollsched.viewer.geo.load_coastlines", lambda path=None, step=1: [])
+    station.single_station(scheduler, start, str(tmp_path / "sometles.txt"))
+    page = (tmp_path / "one.html").read_text()
+    assert "<!doctype html>" in page
+    assert page.count('"ant":"one"') == 2
+    assert '"orbit":' in page
