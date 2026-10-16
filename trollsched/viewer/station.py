@@ -38,15 +38,28 @@ def untrimmed(passes):
 
 
 def extra_visible_passes(full_passes, entries, span, coords, tle_file, horizon=0.0):
-    """Compute the visibility windows of satellites that are only in the avoid lists."""
-    known = {normalize(schedule_name(p)) for p in full_passes}
-    missing = {e.satellite for e in entries if normalize(e.satellite) not in known}
-    if not missing:
+    """Compute the visibility windows of scheduled passes the scheduler does not know.
+
+    That covers satellites that only appear in the avoid lists, and passes the
+    scheduler discarded itself (Aqua/Terra dump restrictions, for instance).
+    """
+    unmatched = [e for e in entries
+                 if not any(normalize(schedule_name(p)) == normalize(e.satellite)
+                            and e.overlaps(p.risetime, p.falltime) for p in full_passes)]
+    if not unmatched:
         return []
+    satellites = {e.satellite for e in unmatched}
     if not tle_file or not Path(tle_file).exists():
-        logger.warning("No TLE file; passes of %s (avoid lists only) cannot be computed", ", ".join(sorted(missing)))
+        logger.warning("No TLE file; passes of %s not known to the scheduler cannot be computed",
+                       ", ".join(sorted(satellites)))
         return []
-    return visible_passes(missing, span[0], span[1], coords, load_tles(tle_file), horizon)
+    computed = visible_passes(satellites, span[0], span[1], coords, load_tles(tle_file), horizon)
+    known = {normalize(schedule_name(p)) for p in full_passes}
+    # satellites the scheduler knows had their other windows discarded on purpose: keep only the scheduled ones
+    return [p for p in computed
+            if normalize(schedule_name(p)) not in known
+            or any(normalize(e.satellite) == normalize(schedule_name(p)) and e.overlaps(p.risetime, p.falltime)
+                   for e in unmatched)]
 
 
 def area_outline(area):

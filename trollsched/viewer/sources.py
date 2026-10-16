@@ -18,10 +18,10 @@ logger = logging.getLogger(__name__)
 
 TIME_FMT = "%Y-%m-%d-%H:%M:%S"
 
-# Schedule name -> TLE name, when normalisation alone is not enough.
+# Schedule name -> TLE name(s), when normalisation alone is not enough.
 TLE_ALIASES = {
-    "npp": "SUOMI NPP",
-    "aws-pfm": "ARCTIC WEATHER SATELLITE",
+    "npp": ("SUOMI NPP", "NPP"),
+    "aws-pfm": ("ARCTIC WEATHER SATELLITE", "AWS", "AWS-PFM"),
     "sga1": "METOP-SGA1",
     "sgb1": "METOP-SGB1",
     "fy3d": "FENGYUN 3D",
@@ -69,8 +69,10 @@ def load_tles(path, aliases=None):
         tles[normalize(lines[i])] = Tle(lines[i], line1=lines[i + 1], line2=lines[i + 2])
 
     def lookup(satellite):
-        for candidate in (aliases.get(satellite), satellite):
-            if candidate and normalize(candidate) in tles:
+        names = aliases.get(satellite, ())
+        candidates = [names] if isinstance(names, str) else list(names)
+        for candidate in candidates + [satellite]:
+            if normalize(candidate) in tles:
                 return tles[normalize(candidate)]
         return None
     return lookup

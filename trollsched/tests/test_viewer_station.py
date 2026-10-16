@@ -48,21 +48,30 @@ def test_untrimmed_returns_originals_once():
     assert station.untrimmed([first, second, other]) == [original, other]
 
 
-def test_extra_visible_passes_only_for_satellites_without_passes(monkeypatch, tmp_path):
-    """Satellites that only appear in avoid lists get their passes computed from the TLEs."""
+def test_extra_visible_passes_for_entries_the_scheduler_does_not_know(monkeypatch, tmp_path):
+    """Entries without a visibility window get one computed from the TLEs.
+
+    A satellite unknown to the scheduler keeps all its windows (its unscheduled passes matter too);
+    a known one only gets the windows the scheduler discarded but another antenna uses.
+    """
     computed = []
+    windows = [FakePass("npp", T0, T0 + timedelta(minutes=12)),
+               FakePass("npp", T0 + timedelta(hours=2), T0 + timedelta(hours=2, minutes=12)),
+               FakePass("aqua", T0 + timedelta(hours=1), T0 + timedelta(hours=1, minutes=12))]
     monkeypatch.setattr(station, "load_tles", lambda path: "lookup")
     monkeypatch.setattr(station, "visible_passes",
-                        lambda sats, start, end, coords, lookup, horizon: computed.append(sorted(sats)) or ["pass"])
+                        lambda sats, start, end, coords, lookup, horizon: computed.append(sorted(sats)) or windows)
     tle = tmp_path / "tle.txt"
     tle.write_text("")
-    full = [FakePass("noaa20", T0, T0 + timedelta(minutes=12))]
+    full = [FakePass("noaa20", T0, T0 + timedelta(minutes=12)),
+            FakePass("aqua", T0 + timedelta(hours=3), T0 + timedelta(hours=3, minutes=12))]
     entries = [ScheduledEntry("noaa20", "cgi", T0, T0 + timedelta(minutes=12)),
                ScheduledEntry("npp", "cgi", T0, T0 + timedelta(minutes=12)),
+               ScheduledEntry("aqua", "cgi", T0 + timedelta(hours=1), T0 + timedelta(hours=1, minutes=12)),
                ScheduledEntry("NOAA-20", "cgi", T0, T0 + timedelta(minutes=12))]
     result = station.extra_visible_passes(full, entries, (T0, T0 + timedelta(days=1)), NRK, str(tle))
-    assert result == ["pass"]
-    assert computed == [["npp"]]
+    assert computed == [["aqua", "npp"]]
+    assert result == [windows[0], windows[1], windows[2]]
 
 
 def test_extra_visible_passes_without_tle_file_warns(caplog):

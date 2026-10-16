@@ -289,10 +289,14 @@ def test_load_tles_resolves_schedule_names(tmp_path):
         "2 43013  98.7872 227.1682 0000217  86.9600 235.4436 14.19531216461574\n"
         "SUOMI NPP\n"
         "1 37849U 11061A   26288.94129890  .00000084  00000+0  60842-4 0  9993\n"
-        "2 37849  98.8060 229.0369 0001795  15.2096 344.9134 14.19538993775571\n")
+        "2 37849  98.8060 229.0369 0001795  15.2096 344.9134 14.19538993775571\n"
+        "AWS\n"
+        "1 60543U 24149CD  26288.91547725  .00000671  00000+0  75562-4 0  9996\n"
+        "2 60543  97.6683 355.8483 0003572  80.7669 279.3953 14.89798229117273\n")
     lookup = sources.load_tles(path, {"jpss1": "NOAA-20"})
     assert lookup("noaa20").line1.startswith("1 43013")
     assert lookup("npp").line1.startswith("1 37849")
+    assert lookup("aws-pfm").line1.startswith("1 60543")
     assert lookup("jpss1").line1.startswith("1 43013")
     assert lookup("metop-b") is None
 
