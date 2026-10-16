@@ -30,8 +30,8 @@ def _trimmed(overpass, start, end):
 
 
 def test_scheduled_entries_use_received_passes_only():
-    """Only passes flagged as received become entries, on the station's antenna."""
-    received = FakePass("noaa20", T0, T0 + timedelta(minutes=12))
+    """Only passes flagged as received become entries, on the station's antenna, in whole seconds."""
+    received = FakePass("noaa20", T0 + timedelta(microseconds=149534), T0 + timedelta(minutes=12, microseconds=4963))
     received.rec = True
     skipped = FakePass("fy3d", T0 + timedelta(hours=1), T0 + timedelta(hours=1, minutes=12))
     skipped.rec = False

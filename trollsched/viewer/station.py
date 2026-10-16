@@ -15,7 +15,9 @@ logger = logging.getLogger(__name__)
 
 def scheduled_entries(reception_passes, antenna):
     """Turn the passes selected for reception into schedule entries for *antenna*."""
-    return [ScheduledEntry(schedule_name(p), antenna, p.risetime, p.falltime, overpass=p)
+    # whole seconds, like the XML writer, so that the same pass on another antenna matches exactly
+    return [ScheduledEntry(schedule_name(p), antenna, p.risetime.replace(microsecond=0),
+                           p.falltime.replace(microsecond=0), overpass=p)
             for p in reception_passes if getattr(p, "rec", False)]
 
 

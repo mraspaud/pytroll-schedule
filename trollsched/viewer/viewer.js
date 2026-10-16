@@ -11,7 +11,7 @@ const antColor = Object.fromEntries(antennas.map((a, i) => [a, ANT_COLORS[i % AN
 // identical passes requested on several antennas become one bar with several antennas
 const merged = new Map();
 for (const p of DATA.passes) {
-  const key = p.un ? "un|" + p.sat + "|" + p.s : p.sat + "|" + p.s + "|" + p.e;
+  const key = p.un ? "un|" + p.sat + "|" + Math.round(p.s) : p.sat + "|" + Math.round(p.s) + "|" + Math.round(p.e);
   if (merged.has(key)) merged.get(key).ants.push(p.ant);
   else merged.set(key, Object.assign({ants: [p.ant]}, p));
 }
