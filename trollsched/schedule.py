@@ -46,7 +46,7 @@ class Station:
     """docstring for Station."""
 
     def __init__(self, station_id, name, longitude, latitude, altitude, area, satellites, area_file=None,
-                 min_pass=MIN_PASS, local_horizon=0):
+                 min_pass=MIN_PASS, local_horizon=0, antenna=None):
         """Initialize the station."""
         self.id = station_id
         self.name = name
@@ -63,7 +63,7 @@ class Station:
                 pass
         self.min_pass = min_pass
         self.local_horizon = local_horizon
-
+        self.antenna = antenna
     @property
     def coords(self):
         """Get the coordinates lon, lat, alt."""
@@ -120,7 +120,7 @@ class Station:
 
         _write_station_metno_reports(sched, allpasses, schedule, self, start_time, pattern_args)
 
-        _publish_xml(sched, allpasses, start_time, pattern_args, self.id)
+        _publish_xml(sched, allpasses, start_time, pattern_args, self.id, self.antenna)
 
         _persist_station_results(sched, graph, labels, allpasses, pattern_args, self.id)
 
@@ -412,23 +412,23 @@ def _persist_station_results(scheduler, graph, labels, passes, pattern_args, sta
             pickle.dump(passes, stream)
 
 
-def _publish_xml(scheduler, passes, start_time, pattern_args, station_id):
+def _publish_xml(scheduler, passes, start_time, pattern_args, station_id, antenna):
     opts = scheduler.opts
     if opts.xml or opts.report:
         pattern_args["mode"] = "request"
-        xmlfile = _write_xml(scheduler, passes, start_time, pattern_args, station_id, report_mode=False)
+        xmlfile = _write_xml(scheduler, passes, start_time, pattern_args, station_id, antenna, report_mode=False)
         send_file(urlparse(opts.output_url or opts.output_dir), xmlfile)
     if opts.report:
         pattern_args["mode"] = "report"
-        _write_xml(scheduler, passes, start_time, pattern_args, station_id, report_mode=True)
+        _write_xml(scheduler, passes, start_time, pattern_args, station_id, antenna, report_mode=True)
 
 
-def _write_xml(scheduler, passes, start_time, pattern_args, station_id, report_mode):
+def _write_xml(scheduler, passes, start_time, pattern_args, station_id, antenna, report_mode):
     xmlfile = generate_xml_file(
         passes, start_time + timedelta(hours=scheduler.start),
         start_time + timedelta(hours=scheduler.forward),
         build_filename("file_xml", scheduler.patterns, pattern_args),
-        station_id, scheduler.center_id, report_mode=report_mode,
+        station_id, scheduler.center_id, report_mode=report_mode, antenna=antenna,
     )
     logger.info("Generated %s", xmlfile)
     return xmlfile
@@ -470,13 +470,14 @@ def _mark_coordinated_passes(schedule):
                 station_pass[0].rec = True
 
 
-def _write_combined_station_products(scheduler, passes, station_id, start_time, pattern_args, station_coords):
+def _write_combined_station_products(scheduler, passes, station_id, start_time, pattern_args, station_coords,
+                                     antenna):
     if scheduler.opts.scisys or scheduler.opts.meos or scheduler.opts.metno_xml:
         coords = station_coords[station_id]
     if scheduler.opts.scisys:
         generate_sch_file(build_filename("file_sci", scheduler.patterns, pattern_args),
                           passes, coords)
-    _publish_xml(scheduler, passes, start_time, pattern_args, station_id)
+    _publish_xml(scheduler, passes, start_time, pattern_args, station_id, antenna)
     if scheduler.opts.meos:
         meosfile = generate_meos_file(build_filename("file_meos", scheduler.patterns, pattern_args),
                                       passes, coords,
@@ -524,13 +525,15 @@ def combined_stations(scheduler, start_time, graph, allpasses):
     _save_combined_graph(scheduler, combined_graph, combinations, station_ids, pattern_args)
 
     station_coords = {}
+    station_antennas = {}
     for station in scheduler.stations:
         station_coords.setdefault(station.id, station.coords)
+        station_antennas.setdefault(station.id, station.antenna)
     for station_id in passes:
         pattern_args["station"] = station_id + "-comb"
         logger.info("Create schedule file(s) for %s", station_id)
         _write_combined_station_products(scheduler, passes[station_id], station_id, start_time,
-                                         pattern_args, station_coords)
+                                         pattern_args, station_coords, station_antennas[station_id])
 
     logger.info("Finished coordinated schedules.")
 

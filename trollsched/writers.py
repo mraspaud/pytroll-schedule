@@ -41,7 +41,7 @@ def generate_sch_file(output_file, overpasses, coords):
 
 def generate_metno_xml_file(output_file, allpasses, coords, start, end, station_name, center_id, report_mode=False):
     """Generate a meto xml file."""
-    from xml.etree import ElementTree as ET  # noqa
+    from xml.etree import ElementTree as ET  # nosec B405 - XML generation only; no untrusted input is parsed.
 
     reqtime = datetime.utcnow()
     time_format = "%Y-%m-%dT%H:%M:%S"
@@ -78,10 +78,10 @@ def generate_metno_xml_file(output_file, allpasses, coords, start, end, station_
     return output_file
 
 
-def generate_xml_requests(sched, start, end, station_name, center_id, report_mode=False):
+def generate_xml_requests(sched, start, end, station_name, center_id, report_mode=False, antenna=None):
     """Create xml requests."""
     # defusedxml is not needed here as we only generate an xml file (ie no reading of potentially harmful data)
-    from xml.etree import ElementTree as ET  # noqa
+    from xml.etree import ElementTree as ET  # nosec B405 - XML generation only; no untrusted input is parsed.
 
     reqtime = datetime.utcnow()
     time_format = "%Y-%m-%d-%H:%M:%S"
@@ -95,7 +95,8 @@ def generate_xml_requests(sched, start, end, station_name, center_id, report_mod
         typep.text = "report"
     else:
         typep.text = "request"
-    antenna = ET.SubElement(props, "antenna")
+    antenna_element = ET.SubElement(props, "antenna")
+    antenna_element.text = antenna
     station = ET.SubElement(props, "station")
     station.text = station_name
     file_start = ET.SubElement(props, "file-start")
@@ -122,12 +123,12 @@ def generate_xml_requests(sched, start, end, station_name, center_id, report_mod
     return root, reqtime
 
 
-def generate_xml_file(sched, start, end, xml_file, station, center_id, report_mode=False):
+def generate_xml_file(sched, start, end, xml_file, station, center_id, report_mode=False, antenna=None):
     """Create an xml request file."""
     import defusedxml.ElementTree as ET
     tree, reqtime = generate_xml_requests(sched,
                                           start, end,
-                                          station, center_id, report_mode)
+                                          station, center_id, report_mode, antenna)
     filename = xml_file
     tmp_filename = xml_file + reqtime.strftime("%Y-%m-%d-%H-%M-%S") + ".tmp"
     with open(tmp_filename, "w") as fp_:

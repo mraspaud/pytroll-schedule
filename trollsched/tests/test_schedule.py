@@ -361,6 +361,17 @@ class TestAll:
                 assert overpass.attrib["aos"] == exp_aos
                 assert overpass.attrib["los"] == exp_los
 
+    def test_write_xml_fills_antenna_when_given(self, tmp_path):
+        """Test that the antenna property of the xml request is filled from the given value."""
+        import defusedxml.ElementTree as ET
+
+        from trollsched.writers import generate_xml_file
+
+        written_file = generate_xml_file([], self.utctime, self.utctime + dt.timedelta(hours=5),
+                                         str(tmp_path / "test.xml"), "id", "center_id", antenna="ANT-1")
+
+        assert ET.parse(written_file).getroot().find("properties/antenna").text == "ANT-1"
+
     def test_write_metno_xml(self, tmp_path):
         """Test that writing pass list in metno xml format work as expected."""
         import defusedxml.ElementTree as ET

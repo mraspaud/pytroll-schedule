@@ -92,6 +92,16 @@ def test_station_publishes_requests_and_optional_reports(flags, station_setup, t
     assert (tmp_path / "one-report.xml").exists() == ("-r" in flags)
 
 
+def test_station_antenna_is_published_in_request(station_setup, tmp_path, monkeypatch):
+    """The antenna configured for a station ends up in its request file."""
+    station, scheduler, start = station_setup
+    station_with_antenna = Station(station.id, station.name, *station.coords, station.area, station.satellites,
+                                   antenna="ANT-1")
+    monkeypatch.setattr("trollsched.schedule.send_file", lambda url, file: None)
+    station_with_antenna.single_station(scheduler, start, str(tmp_path / "sometles.txt"))
+    assert ET.parse(tmp_path / "one-request.xml").getroot().findtext("properties/antenna") == "ANT-1"
+
+
 def test_station_persists_graph_passes_and_all_product_formats(station_setup, tmp_path, monkeypatch):
     """Preserve products, received flags, and report images in coordinated mode."""
     station, scheduler, start = station_setup
@@ -137,6 +147,21 @@ def test_coordinated_station_products_preserve_modes_and_received_passes(
         assert (tmp_path / f"{station_id}-comb-report.xml").exists() == ("-r" in flags)
         assert (tmp_path / f"{station_id}-comb.meos").stat().st_size > 0
         assert ET.parse(tmp_path / f"{station_id}-comb.metno.xml").findtext("properties/type") == "request"
+
+
+def test_coordinated_station_requests_carry_each_stations_antenna(coordinated_setup, tmp_path, monkeypatch):
+    """Combined requests keep the antenna configured for their own station."""
+    scheduler, start = coordinated_setup
+    for station, antenna in zip(scheduler.stations, ("ANT-1", "ANT-2")):
+        station.antenna = antenna
+    predictions = {s.id: s.single_station(scheduler, start, str(tmp_path / "sometles.txt"))
+                   for s in scheduler.stations}
+    monkeypatch.setattr("trollsched.schedule.send_file", lambda url, file: None)
+    combined_stations(scheduler, start, {s: value[0] for s, value in predictions.items()},
+                      {s: value[1] for s, value in predictions.items()})
+    for station_id, antenna in (("one", "ANT-1"), ("two", "ANT-2")):
+        root = ET.parse(tmp_path / f"{station_id}-comb-request.xml").getroot()
+        assert root.findtext("properties/antenna") == antenna
 
 
 @pytest.mark.parametrize("execution_flags", [(), ("--multiproc",)])

@@ -39,6 +39,8 @@ stations:
         altitude: 0.052765
         area_file: /home/amaul/PyTROLL/etc/areas.def
         area: euron1
+        # optional, written to the <antenna> element of the xml requests
+        antenna: nrk-antenna-1
         satellites:
             - metop-b
             - noaa 19

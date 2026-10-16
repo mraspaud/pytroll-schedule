@@ -144,6 +144,12 @@ Stations
 	This area is taken into computation, only satellite passes which swaths
 	are cross-sectioning this area are considered for scheduling.
 
+``antenna``
+	Optional. Name/ID of the antenna of this station, written to the
+	``<antenna>`` element in the properties of the generated xml request and
+	report files (also in the coordinated schedules). If omitted, the element
+	is left empty.
+
 ``satellites``
 	Satellites receivable from this station.
 	The listed names may refer to the satellite sections.
