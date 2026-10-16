@@ -63,6 +63,16 @@ Usage of the schedule script::
 	  -g, --graph           save graph info
 
 
+When using ``--avoid``, satellite identifiers in the XML are matched against
+both the declared satellite names and their configured ``schedule_name``
+aliases. For sequential runs on different antennas, use the same
+``schedule_name`` for each shared satellite in both configurations.
+Alias matches require overlapping reception windows; other passes of the
+same satellite are not penalised merely because their names match.
+Avoidance retains its existing scoring penalty rather than strictly
+excluding matching passes.
+
+
 .. warning::
 
    Coordinated scheduling writes local pickle artifacts, and ``--multiproc``

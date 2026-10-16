@@ -131,6 +131,33 @@ def test_best_schedule_leaves_out_passes_to_avoid():
     assert sorted(schedule) == [earlier, small, later]
 
 
+@pytest.mark.parametrize(("name", "alias"), [("NOAA-20", "noaa20"), ("NOAA-21", "noaa21")])
+def test_avoid_list_matches_configured_schedule_names(name, alias):
+    """Recognise a previously received pass under its XML schedule alias."""
+    earlier = StubPass("earlier", INNER_EAST_SWATH, NORTHERN_SUMMER_NOON - 60 * ONE_MINUTE)
+    large, small, later = large_and_small_conflicting_passes_then_a_later_one()
+    large.satellite.name = name
+    large.satellite.schedule_name = alias
+    to_avoid = SimplePass(alias, large.risetime, large.falltime)
+
+    schedule, _ = get_best_sched([earlier, small, later, large], AREA, ONE_MINUTE, avoid_list=[to_avoid])
+
+    assert sorted(schedule) == [earlier, small, later]
+
+
+def test_avoid_alias_does_not_penalise_a_different_pass_of_the_same_satellite():
+    """An alias match still requires overlapping reception windows."""
+    earlier = StubPass("earlier", INNER_EAST_SWATH, NORTHERN_SUMMER_NOON - 60 * ONE_MINUTE)
+    large, small, later = large_and_small_conflicting_passes_then_a_later_one()
+    large.satellite.schedule_name = "alias"
+    another_pass = SimplePass("alias", large.risetime - dt.timedelta(hours=2),
+                              large.falltime - dt.timedelta(hours=2))
+
+    schedule, _ = get_best_sched([earlier, small, later, large], AREA, ONE_MINUTE, avoid_list=[another_pass])
+
+    assert sorted(schedule) == [earlier, large, later]
+
+
 def test_best_schedule_takes_the_better_pass_in_the_very_first_conflict():
     """Test that the first conflict of the schedule is decided on coverage too."""
     large, small, later = large_and_small_conflicting_passes_then_a_later_one(large_day_score=0.01)

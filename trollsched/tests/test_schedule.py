@@ -475,7 +475,8 @@ avoid = """<?xml version="1.0"?>
 """
 
 
-def test_schedule_avoid(tmp_path):
+@pytest.mark.parametrize("schedule_name", ["suomi npp", "npp"])
+def test_schedule_avoid(tmp_path, schedule_name):
     """Test that schedule can handle avoid list."""
     tle = ("SUOMI NPP\n"
            "1 37849U 11061A   24128.72979065  .00000000  00000+0  12832-3 0 00014\n"
@@ -483,10 +484,10 @@ def test_schedule_avoid(tmp_path):
            "NOAA 20\n"
            "1 37849U 11061A   24128.72979065  .00000000  00000+0  12832-3 0 00014\n"
            "2 37849  98.7205  67.3215 0001498  76.6175 303.3589 14.19560637649138\n")
-    satellites = {"suomi npp": dict(schedule_name="suomi npp", international_designator="37849", night=0.4, day=0.9),
+    satellites = {"suomi npp": dict(schedule_name=schedule_name, international_designator="37849", night=0.4, day=0.9),
                   "noaa 20": dict(schedule_name="noaa 20", international_designator="99999", night=0.4, day=0.9)}
     avoid_file = tmp_path / "avoid.xml"
-    avoid_file.write_text(avoid)
+    avoid_file.write_text(avoid.replace('satellite="suomi npp"', f'satellite="{schedule_name}"'))
 
     sched_file = run_schedule(tmp_path, tle, satellites, "2024-05-08T00:00:00",
                               extra_args=["-v", "--avoid", os.fspath(avoid_file)])

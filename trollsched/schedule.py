@@ -280,10 +280,17 @@ def _last_passes(alternatives):
     return {max(alternative, key=lambda overpass: overpass.falltime) for alternative in alternatives}
 
 
+def _matches_avoid_entry(overpass, entry):
+    return overpass == entry or (
+        overpass.satellite.schedule_name == entry.satellite.name and overpass.overlaps(entry))
+
+
 def get_best_sched(overpasses, area_of_interest, delay, avoid_list=None):
     """Get the best schedule based on *area_of_interest*."""
     avoid_list = avoid_list or []
     passes = sorted(overpasses, key=lambda x: x.risetime)
+    avoided = {id(overpass) for overpass in passes
+               if any(_matches_avoid_entry(overpass, entry) for entry in avoid_list)}
     alternatives_per_conflict = [get_non_conflicting_groups(conflict, delay)
                                  for conflict in conflicting_passes(passes, delay)]
     logger.debug("non conflicting %s", str(alternatives_per_conflict))
@@ -293,7 +300,7 @@ def get_best_sched(overpasses, area_of_interest, delay, avoid_list=None):
     graph = Graph(n_vertices=len(passes) + 2)
 
     def add_arc(p1, p2):
-        if p1 in avoid_list or p2 in avoid_list:
+        if id(p1) in avoided or id(p2) in avoided:
             weight = 0
         else:
             weight = combine(p1, p2, area_of_interest)
