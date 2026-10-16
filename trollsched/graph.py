@@ -132,9 +132,9 @@ class Graph():
 
     def export(self, filename="./sched.gv", labels=None):
         """Export the schedule to gv format for visualization.
-        
+
         To generate a pdf out of it::
-            
+
             dot sched.gv -Tpdf -osched.pdf.
         """
         with open(filename, "w") as fd_:

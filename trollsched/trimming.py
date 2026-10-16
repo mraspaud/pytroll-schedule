@@ -1,8 +1,8 @@
 """Trimming overlapping passes within their coverage-loss limits."""
 import datetime as dt
+from copy import copy
 
 from trollsched import MIN_PASS
-from trollsched.satpass import Pass
 from trollsched.spherical import intersect
 
 TIME_RESOLUTION = dt.timedelta(seconds=1)
@@ -11,9 +11,34 @@ OUTLINE_SAMPLING_NOISE = 1e-4
 
 def trimmed(overpass, risetime, falltime):
     """Get a copy of *overpass* received from *risetime* to *falltime* only."""
-    return Pass(overpass.satellite, risetime, falltime, orb=overpass.orb, uptime=overpass.uptime,
-                instrument=overpass.instrument, frequency=overpass.frequency,
-                number_of_fovs=overpass.number_of_fovs)
+    result = copy(overpass)
+    result.risetime, result.falltime = risetime, falltime
+    result.score = {}
+    result._boundary = None
+    result.original = getattr(overpass, "original", overpass)
+    return result
+
+
+def restore_unused_trim(passes, delay):
+    """Expand selected reception windows without conflicting with their selected neighbours.
+
+    Fill free time in chronological order, leaving candidate windows unchanged so
+    that they still match the graph used for coordinated scheduling.
+    """
+    passes = list(passes)
+    selected = sorted((overpass for overpass in passes if overpass.rec), key=lambda overpass: overpass.risetime)
+    restored = {}
+    previous_end = None
+    for index, overpass in enumerate(selected):
+        original = getattr(overpass, "original", overpass)
+        start = original.risetime if previous_end is None else max(original.risetime, previous_end + delay)
+        end = original.falltime
+        if index + 1 < len(selected):
+            end = min(end, selected[index + 1].risetime - delay)
+        if (start, end) != (overpass.risetime, overpass.falltime):
+            restored[id(overpass)] = trimmed(overpass, start, end)
+        previous_end = end
+    return [restored.get(id(overpass), overpass) for overpass in passes]
 
 
 def _coverage(overpass, area_of_interest):

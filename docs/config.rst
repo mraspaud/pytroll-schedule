@@ -221,6 +221,13 @@ A few examples for satellite sections, assigning scores to each satellite.
 	removed. If the conflict cannot be resolved within these constraints,
 	nothing is trimmed and the scheduler picks one pass as usual.
 
+	After selection, unused trimmed time is restored where it does not
+	conflict with another selected pass or the required scheduling delay.
+	A pass therefore does not remain shortened solely to accommodate a
+	trimming partner that was not selected. This applies to single-station
+	and coordinated output, including reports and plots. It does not change
+	which passes the scheduler selects.
+
 ``max_coverage_loss``
 	Optional number from 0 to 100, expressed in percent, with a default of 0.
 	When ``trimmable: true``, this sets the maximum fraction of each pass's

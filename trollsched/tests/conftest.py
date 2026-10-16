@@ -107,3 +107,23 @@ def november_2025_tle_file(tmp_path):
     file_path = tmp_path / "november_2025.tle"
     file_path.write_text(NOVEMBER_2025_TLES)
     return file_path
+
+
+OCTOBER_2026_TLES = """FENGYUN 3F
+1 57490U 23111A   26288.96242057  .00000042  00000+0  39992-4 0  9995
+2 57490  98.6717 356.6449 0001514  96.7864 263.3485 14.19955112166005
+FENGYUN 3H
+1 65815U 25219A   26288.53756938  .00000059  00000+0  48351-4 0  9994
+2 65815  98.6870 227.0075 0001548  78.7299 281.4051 14.19937292 54465
+METOP-SGA1
+1 65159U 25172A   26288.60636292  .00000036  00000+0  36401-4 0  9999
+2 65159  98.7403 346.3339 0000964 107.9009 252.2274 14.21470582 60896
+"""
+
+
+@pytest.fixture
+def october_2026_tle_file(tmp_path):
+    """Write real TLEs of FY-3F, FY-3H and Metop-SGA1 from October 2026."""
+    file_path = tmp_path / "october_2026.tle"
+    file_path.write_text(OCTOBER_2026_TLES)
+    return file_path

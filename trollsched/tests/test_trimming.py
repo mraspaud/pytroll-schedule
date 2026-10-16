@@ -1,12 +1,16 @@
 """Test the trimming of overlapping passes."""
 import datetime as dt
 
+import defusedxml.ElementTree as ET
 import pytest
+from pyresample.geometry import AreaDefinition
 
+from trollsched.pass_scheduling_utils import Satellite
 from trollsched.satpass import create_pass
+from trollsched.schedule import Scheduler, Station, combined_stations, parse_args
 from trollsched.tests.polygons import AreaOfInterest
 from trollsched.tests.test_satpass import AREA_DEF_EURON1
-from trollsched.trimming import in_area_window, trim_associated_overlaps
+from trollsched.trimming import in_area_window, restore_unused_trim, trim_associated_overlaps, trimmed
 
 EURON1 = AreaOfInterest(AREA_DEF_EURON1.boundary(8).contour_poly)
 ONE_MINUTE = dt.timedelta(minutes=1)
@@ -194,3 +198,97 @@ def test_trimmed_passes_share_their_overlap_equally_when_outside_the_area(novemb
     trimmed_sga1, trimmed_fy3f = trim_associated_overlaps([sga1, fy3f], EURON1, ONE_MINUTE)
 
     assert sga1.falltime - trimmed_sga1.falltime == trimmed_fy3f.risetime - fy3f.risetime
+
+
+def test_unused_trim_is_recovered_only_up_to_another_selected_pass(
+        sga1_and_fy3f_overlapping_outside_the_area, november_2025_tle_file):
+    """Recover the available reception time without overlapping a different selected pass."""
+    sga1, fy3f = sga1_and_fy3f_overlapping_outside_the_area
+    _, shortened = trim_associated_overlaps([sga1, fy3f], EURON1, ONE_MINUTE)
+    blocker = create_pass("METOP-SGA1", "avhrr", sga1.risetime, shortened.risetime - 2 * ONE_MINUTE,
+                          str(november_2025_tle_file))
+    blocker.rec = shortened.rec = True
+
+    _, restored = restore_unused_trim([blocker, shortened], ONE_MINUTE)
+
+    assert restored.risetime == blocker.falltime + ONE_MINUTE
+
+
+def test_selected_trimming_partners_keep_their_shared_cut(sga1_and_fy3f_overlapping_outside_the_area):
+    """Keep the necessary trimming when both partners are received."""
+    candidates = trim_associated_overlaps(sga1_and_fy3f_overlapping_outside_the_area, EURON1, ONE_MINUTE)
+    for overpass in candidates:
+        overpass.rec = True
+
+    assert reception_times(restore_unused_trim(candidates, ONE_MINUTE)) == reception_times(candidates)
+
+
+def test_recovering_both_sides_of_a_gap_preserves_delay_and_candidate_windows(
+        sga1_and_fy3f_overlapping_outside_the_area):
+    """Expanding two receptions must neither overlap nor mutate the graph's candidate passes."""
+    sga1, fy3f = sga1_and_fy3f_overlapping_outside_the_area
+    candidates = [trimmed(sga1, sga1.risetime, dt.datetime(2025, 11, 21, 9, 30)),
+                  trimmed(fy3f, dt.datetime(2025, 11, 21, 9, 40), fy3f.falltime)]
+    for overpass in candidates:
+        overpass.rec = True
+    candidate_windows = reception_times(candidates)
+
+    first, second = restore_unused_trim(candidates, ONE_MINUTE)
+
+    assert first.falltime + ONE_MINUTE <= second.risetime
+    assert first.risetime == sga1.risetime
+    assert second.falltime == fy3f.falltime
+    assert reception_times(candidates) == candidate_windows
+
+
+@pytest.fixture
+def discarded_trimming_partner_setup(october_2026_tle_file, tmp_path, monkeypatch):
+    """Provide a station where FY-3H wins over the SGA1 that FY-3F was trimmed for."""
+    monkeypatch.setattr("trollsched.schedule.send_file", lambda url, file: None)
+    satellites = [Satellite("METOP-SGA1", 0.7, 0.7, trimmable=True),
+                  Satellite("FENGYUN 3F", 0.6, 0.3, trimmable=True, max_coverage_loss=5),
+                  Satellite("FENGYUN 3H", 0.9, 0.9)]
+    station = Station("nrk", "nrk", 16.148649, 58.581844, 0.052765, AREA_DEF_EURON1, satellites)
+    patterns = {"dir_output": str(tmp_path), "file_xml": str(tmp_path / "{station}-{mode}.xml")}
+    scheduler = Scheduler([station], 4, 2, 0, None, patterns, "TEST", {}, None)
+    scheduler.opts = parse_args(["-c", "unused", "-x", "-d", "15"])
+    scheduler.opts.output_dir = str(tmp_path)
+    scheduler.opts.comb = False
+
+    return station, scheduler, dt.datetime(2026, 10, 18, 10, 0), str(october_2026_tle_file)
+
+
+@pytest.mark.parametrize("coordinated", [False, True])
+def test_pass_is_not_trimmed_for_a_trimming_partner_that_is_not_scheduled(
+        discarded_trimming_partner_setup, tmp_path, coordinated):
+    """Keep the full FY-3F window when the SGA1 it was trimmed for is not received."""
+    station, scheduler, start, tle_file = discarded_trimming_partner_setup
+    graph, passes = station.single_station(scheduler, start, tle_file)
+    if coordinated:
+        combined_stations(scheduler, start, {"nrk": graph}, {"nrk": passes})
+
+    filename = "nrk-comb-request.xml" if coordinated else "nrk-request.xml"
+    scheduled = [(overpass.attrib["satellite"], overpass.attrib["start-time"])
+                 for overpass in ET.parse(tmp_path / filename).getroot().findall("pass")]
+    assert scheduled == [("FENGYUN 3H", "2026-10-18-10:24:33"), ("FENGYUN 3F", "2026-10-18-10:42:53")]
+
+
+@pytest.mark.parametrize("coordinated", [False, True])
+def test_report_plots_use_restored_reception_windows(
+        discarded_trimming_partner_setup, tmp_path, monkeypatch, coordinated):
+    """The report's image depicts the reception window actually published."""
+    station, scheduler, start, tle_file = discarded_trimming_partner_setup
+    scheduler.opts.report = scheduler.opts.plot = True
+    scheduler.patterns["dir_plots"] = str(tmp_path / "plots")
+    monkeypatch.setattr("trollsched.drawing.save_fig",
+                        lambda overpass, **kwargs: setattr(overpass, "fig", overpass.risetime.isoformat()))
+
+    graph, passes = station.single_station(scheduler, start, tle_file)
+    if coordinated:
+        station.area = AreaDefinition("euron1", "", "", station.area.proj_dict,
+                                      station.area.width, station.area.height, station.area.area_extent)
+        combined_stations(scheduler, start, {"nrk": graph}, {"nrk": passes})
+
+    filename = "nrk-comb-report.xml" if coordinated else "nrk-report.xml"
+    fy3f = ET.parse(tmp_path / filename).find("pass[@satellite='FENGYUN 3F']")
+    assert fy3f.attrib["img"] == "2026-10-18T10:42:53.666865"

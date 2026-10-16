@@ -36,7 +36,7 @@ from trollsched.combine import get_combined_sched
 from trollsched.graph import Graph
 from trollsched.satpass import SimplePass, get_next_passes
 from trollsched.spherical import intersect, split_day_and_night
-from trollsched.trimming import trim_associated_overlaps
+from trollsched.trimming import restore_unused_trim, trim_associated_overlaps
 from trollsched.writers import generate_meos_file, generate_metno_xml_file, generate_sch_file, generate_xml_file
 
 logger = logging.getLogger(__name__)
@@ -93,8 +93,6 @@ class Station:
         allpasses = trim_associated_overlaps(allpasses, self.area, timedelta(seconds=opts.delay),
                                              timedelta(minutes=self.min_pass))
 
-        image_saver = _start_station_plots(sched, self, allpasses, pattern_args)
-
         if opts.avoid is not None:
             avoid_list = get_passes_from_xml_file(opts.avoid)
         else:
@@ -109,18 +107,21 @@ class Station:
         logger.debug(pformat(schedule))
         for opass in schedule:
             opass.rec = True
+        reception_passes = restore_unused_trim(allpasses, timedelta(seconds=opts.delay))
+        image_saver = _start_station_plots(sched, self, reception_passes, pattern_args)
         logger.info("generating file")
 
-        _write_station_reception_products(sched, allpasses, self.coords, start_time, pattern_args)
+        _write_station_reception_products(sched, reception_passes, self.coords, start_time, pattern_args)
 
         if opts.plot:
             logger.info("Waiting for images to be saved...")
             image_saver.join()
             logger.info("Done!")
 
-        _write_station_metno_reports(sched, allpasses, schedule, self, start_time, pattern_args)
+        _write_station_metno_reports(sched, reception_passes, [p for p in reception_passes if p.rec],
+                                    self, start_time, pattern_args)
 
-        _publish_xml(sched, allpasses, start_time, pattern_args, self.id, self.antenna)
+        _publish_xml(sched, reception_passes, start_time, pattern_args, self.id, self.antenna)
 
         _persist_station_results(sched, graph, labels, allpasses, pattern_args, self.id)
 
@@ -377,7 +378,7 @@ def _start_station_plots(scheduler, station, passes, pattern_args):
     from threading import Thread
     directory = build_filename("dir_plots", scheduler.patterns, pattern_args)
     logger.info("Saving plots to %s", directory)
-    image_saver = Thread(target=save_passes, args=(passes, station.area.poly, directory,
+    image_saver = Thread(target=save_passes, args=(passes, station.area.boundary(8).contour_poly, directory,
                                                  scheduler.plot_parameters, scheduler.plot_title))
     image_saver.start()
     return image_saver
@@ -472,6 +473,10 @@ def _mark_coordinated_passes(schedule):
 
 def _write_combined_station_products(scheduler, passes, station_id, start_time, pattern_args, station_coords,
                                      antenna):
+    passes = restore_unused_trim(passes, timedelta(seconds=scheduler.opts.delay))
+    if scheduler.opts.plot:
+        station = next(station for station in scheduler.stations if station.id == station_id)
+        _start_station_plots(scheduler, station, passes, pattern_args).join()
     if scheduler.opts.scisys or scheduler.opts.meos or scheduler.opts.metno_xml:
         coords = station_coords[station_id]
     if scheduler.opts.scisys:
