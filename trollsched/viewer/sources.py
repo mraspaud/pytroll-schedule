@@ -63,7 +63,7 @@ def load_tles(path, aliases=None):
     """Read every TLE in *path*; return a lookup function from schedule name to ``Tle``."""
     from pyorbital.tlefile import Tle
     aliases = dict(TLE_ALIASES, **(aliases or {}))
-    lines = [ln.rstrip() for ln in Path(path).read_text().splitlines() if ln.strip()]
+    lines = [ln.rstrip() for ln in Path(path).read_text(encoding="utf-8").splitlines() if ln.strip()]
     tles = {}
     for i in range(0, len(lines) - 2, 3):
         tles[normalize(lines[i])] = Tle(lines[i], line1=lines[i + 1], line2=lines[i + 2])

@@ -227,7 +227,7 @@ def test_station_writes_html_viewer(station_setup, tmp_path, monkeypatch):
     scheduler.patterns["file_html"] = str(tmp_path / "{station}.html")
     monkeypatch.setattr("trollsched.viewer.geo.load_coastlines", lambda path=None, step=1: [])
     station.single_station(scheduler, start, str(tmp_path / "sometles.txt"))
-    page = (tmp_path / "one.html").read_text()
+    page = (tmp_path / "one.html").read_text(encoding="utf-8")
     assert "<!doctype html>" in page
     assert page.count('"ant":"one"') == 2
     assert '"orbit":' in page
