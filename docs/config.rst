@@ -220,6 +220,8 @@ A few examples for satellite sections, assigning scores to each satellite.
 	preserved. By default, only reception outside the area of interest is
 	removed. If the conflict cannot be resolved within these constraints,
 	nothing is trimmed and the scheduler picks one pass as usual.
+	Overlapping pairs are considered even when other candidate passes start
+	between them; an intervening candidate does not prevent a feasible trim.
 
 	After selection, unused trimmed time is restored where it does not
 	conflict with another selected pass or the required scheduling delay.

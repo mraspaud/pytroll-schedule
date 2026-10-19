@@ -81,10 +81,13 @@ def trim_associated_overlaps(passes, area_of_interest, delay, shortest_pass=dt.t
     """Trim associated overlapping passes within their configured area-coverage allowances."""
     passes = sorted(passes, key=lambda overpass: overpass.risetime)
     original_passes = passes.copy()
-    for index in range(len(passes) - 1):
-        passes[index], passes[index + 1] = _trim_pair(passes[index], passes[index + 1],
-                                                      area_of_interest, delay, shortest_pass,
-                                                      original_passes[index:index + 2])
+    for first_index in range(len(passes) - 1):
+        for second_index in range(first_index + 1, len(passes)):
+            if original_passes[second_index].risetime >= passes[first_index].falltime + delay:
+                break
+            passes[first_index], passes[second_index] = _trim_pair(
+                passes[first_index], passes[second_index], area_of_interest, delay, shortest_pass,
+                (original_passes[first_index], original_passes[second_index]))
     return passes
 
 

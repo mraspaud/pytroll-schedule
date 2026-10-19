@@ -1,13 +1,14 @@
 """Test the trimming of overlapping passes."""
 import datetime as dt
+from pathlib import Path
 
 import defusedxml.ElementTree as ET
 import pytest
 from pyresample.geometry import AreaDefinition
 
 from trollsched.pass_scheduling_utils import Satellite
-from trollsched.satpass import create_pass
-from trollsched.schedule import Scheduler, Station, combined_stations, parse_args
+from trollsched.satpass import create_pass, get_next_passes
+from trollsched.schedule import Scheduler, Station, combined_stations, get_best_sched, parse_args
 from trollsched.tests.polygons import AreaOfInterest
 from trollsched.tests.test_satpass import AREA_DEF_EURON1
 from trollsched.trimming import in_area_window, restore_unused_trim, trim_associated_overlaps, trimmed
@@ -72,6 +73,35 @@ def test_trimmable_passes_overlapping_outside_the_area_are_both_kept_without_con
     first, second = trim_associated_overlaps(sga1_and_fy3f_overlapping_outside_the_area, EURON1, ONE_MINUTE)
 
     assert first.falltime + ONE_MINUTE <= second.risetime
+
+
+@pytest.mark.parametrize("intervening_trimmable", [False, True])
+def test_intervening_candidate_does_not_hide_a_trimmable_pair(
+        sga1_and_fy3f_overlapping_outside_the_area, intervening_trimmable):
+    """Consider a feasible pair even when another candidate starts between its passes."""
+    sga1, fy3f = sga1_and_fy3f_overlapping_outside_the_area
+    intervening = trimmed(sga1, sga1.risetime + ONE_MINUTE, sga1.falltime)
+    intervening.satellite = Satellite("intervening", 0.1, 0.1, trimmable=intervening_trimmable)
+
+    first, _, second = trim_associated_overlaps([sga1, intervening, fy3f], EURON1, ONE_MINUTE)
+
+    assert first.falltime + ONE_MINUTE <= second.risetime
+
+
+def test_october_20_schedule_keeps_sga1_and_fy3f_despite_intervening_aqua():
+    """Receive SGA1 and FY3F together instead of FY3H when a tiny turnaround trim suffices."""
+    tle_file = Path(__file__).parent / "data" / "tle_20261019.txt"
+    satellites = [Satellite("METOP-SGA1", 0.7, 0.7, trimmable=True),
+                  Satellite("FENGYUN 3F", 0.6, 0.3, trimmable=True, max_coverage_loss=5),
+                  Satellite("FENGYUN 3H", 0.01, 0.01), Satellite("AQUA", 0.2, 0.2)]
+    passes = get_next_passes(satellites, dt.datetime(2026, 10, 20, 11, 20), 1,
+                            (16.148649, 58.581844, 0.052765), tle_file=str(tle_file))
+    delay = dt.timedelta(seconds=15)
+    candidates = trim_associated_overlaps(passes, EURON1, delay)
+
+    selected, _ = get_best_sched(candidates, EURON1, delay)
+
+    assert [overpass.satellite.name for overpass in sorted(selected)] == ["METOP-SGA1", "FENGYUN 3F"]
 
 
 def test_trimming_passes_overlapping_outside_the_area_keeps_their_coverage_of_the_area(
