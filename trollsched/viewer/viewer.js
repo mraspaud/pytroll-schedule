@@ -35,6 +35,7 @@ const ymd = t => new Date(t * 1000).toISOString().slice(0, 10);
 const dayLabel = t => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(t * 1000).getUTCDay()] + " " + ymd(t);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
 const passId = p => p.sat + "-" + Math.round(p.s);
+const normalize = s => String(s).toLowerCase().replace(/[^a-z0-9]/g, ""); // like records.normalize
 const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 
 function hexToHsl(hex) {
@@ -130,7 +131,7 @@ function draw() {
   passes.forEach((p, i) => {
     if (p.e < t0 || p.s > t1) return;
     const y = T + sats.indexOf(p.sat) * RH + 5, x = X(p.s), w = Math.max(2, X(p.e) - x);
-    o += `<g class="bar${p.un ? " un" : ""}" data-i="${i}">`;
+    o += `<g class="bar${p.un ? " un" : ""}${productState(p) === "missing" ? " missing" : ""}" data-i="${i}">`;
     if (p.fs !== undefined) {
       const fx = X(p.fs), fw = Math.max(2, X(p.fe) - fx);
       o += `<rect class="trim" x="${fx}" y="${y + 3}" width="${fw}" height="${RH - 16}" rx="2"/>`;
@@ -165,7 +166,7 @@ function drawList() {
     `<th>Orbit</th><th>Dir</th><th>Max el</th>${hasArea ? "<th>Area</th>" : ""}<th></th></tr></thead><tbody>`;
   for (const p of rows) {
     const i = passes.indexOf(p), dur = Math.round(p.e - p.s);
-    const note = p.un ? "not scheduled" : p.fs !== undefined ? "trimmed" : p.conflict ? "overlap" : "";
+    const note = p.un ? "not scheduled" : productState(p) === "missing" ? "no product" : p.fs !== undefined ? "trimmed" : p.conflict ? "overlap" : "";
     o += `<tr class="${p.un ? "un" : ""}" data-i="${i}"><td><i class="sw${p.un ? " un" : ""}" style="background:${swatch(p)}"></i>${esc(p.name)}</td>` +
       `<td>${esc(p.un ? "–" : p.ants.join(" + "))}</td><td>${ymd(p.s)}</td><td>${hhmmss(p.s)}</td><td>${hhmmss(p.e)}</td>` +
       `<td>${Math.floor(dur / 60)}:${pad(dur % 60)}</td><td>${p.orbit ?? ""}</td><td>${p.dir ? p.dir[0].toUpperCase() : ""}</td>` +
@@ -190,7 +191,7 @@ document.getElementById("today").onclick = fitDay;
 document.getElementById("week").onclick = () => { t0 = DATA.span[0]; t1 = DATA.span[1]; draw(); };
 document.getElementById("now").onclick = () => { const n = Date.now() / 1000, s = Math.min(t1 - t0, 6 * 3600); t0 = n - s / 3; t1 = t0 + s; draw(); };
 document.getElementById("lanes").onchange = ev => { lanes = ev.target.checked; draw(); };
-window.addEventListener("resize", draw);
+window.addEventListener("resize", () => { if (document.getElementById("status")) draw(); });
 
 svg.addEventListener("wheel", ev => {
   ev.preventDefault();
@@ -333,6 +334,8 @@ function drawPassMap(canvas, p) {
   const c = canvas.getContext("2d"); c.drawImage(base, 0, 0);
   c.save(); clipToDisc(c);
   if (p.sun) drawNight(c, p.sun);
+  const img = productImage(p);
+  if (img) c.drawImage(img, 2, 2, SZ - 4, SZ - 4);
   if (p.fcov) {
     c.strokeStyle = "#777"; c.fillStyle = "rgba(128,128,128,.35)"; c.lineWidth = 1; c.setLineDash([3, 2]);
     c.beginPath(); ringPath(c, densify(p.fcov, 8), true); c.fill(); c.stroke(); c.setLineDash([]);
@@ -340,7 +343,7 @@ function drawPassMap(canvas, p) {
   const col = p.un ? "#d9d9d9" : antColor[p.ants[0]];
   c.strokeStyle = "#333"; c.lineWidth = 1.5;
   c.fillStyle = p.un || p.ants.length < 2 ? col + "66" : stripePattern(c, p.ants.map(a => antColor[a] + "66"));
-  c.beginPath(); ringPath(c, densify(p.cov, 8), true); c.fill(); c.stroke();
+  c.beginPath(); ringPath(c, densify(p.cov, 8), true); if (!img) c.fill(); c.stroke();
   if (p.track) drawArrow(c, p.track, "rgba(40,40,40,.6)");
   c.restore();
 }
@@ -363,13 +366,15 @@ function passInfoHtml(p) {
     `<div>${Math.floor(dur / 60)} min ${dur % 60} s · station ${esc(p.station)}${p.conflict ? ' · <span class="warn">overlaps another pass</span>' : ""}</div>` +
     (geometry.length ? `<div class="muted">${geometry.join(" · ")}</div>` : "") +
     (p.fs !== undefined ? `<div class="muted">trimmed: visible ${hhmmss(p.fs)} → ${hhmmss(p.fe)}, ${Math.max(0, Math.round(p.s - p.fs))} s cut at start, ${Math.max(0, Math.round(p.fe - p.e))} s at end</div>` : "") +
-    lostTo(p);
+    lostTo(p) + productsHtml(p);
 }
+let shown = null, pagePass = null; // the canvas (and, on the single-pass page, the pass) currently shown
+function showMap(canvas, p) { shown = {canvas, p}; drawPassMap(canvas, p); }
 function showTip(p, ev) {
   setMapSize(256);
   tip.innerHTML = passInfoHtml(p) + (p.cov ? `<canvas width="${SZ}" height="${SZ}"></canvas>` : `<div class="muted">no coverage available</div>`) +
     `<div class="muted hint">click to open in a new tab</div>`;
-  if (p.cov) drawPassMap(tip.querySelector("canvas"), p);
+  if (p.cov) showMap(tip.querySelector("canvas"), p);
   tip.style.display = "block";
   const r = wrap.getBoundingClientRect(), tw = tip.offsetWidth, th = tip.offsetHeight;
   let x = ev.clientX - r.left + 14, y = ev.clientY - r.top + 14;
@@ -383,13 +388,84 @@ function showPassPage(id) { // single-pass page: schedule.html?pass=<sat>-<unix 
   const el = document.createElement("div"); el.className = "passpage";
   if (!p) { el.innerHTML = `<p>No pass with id <code>${esc(id)}</code>.</p><p><a href="${location.pathname}">Back to the schedule</a></p>`; document.body.appendChild(el); return; }
   document.title = `${p.name} ${ymd(p.s)} ${hhmm(p.s)} UTC`;
+  pagePass = p;
   el.innerHTML = `<p><a href="${location.pathname}">← schedule</a></p><div class="passinfo">${passInfoHtml(p)}</div>`;
   const size = Math.min(760, window.innerWidth - 48);
-  if (p.cov) { const cv = document.createElement("canvas"); cv.width = cv.height = size; cv.className = "bigmap"; el.appendChild(cv); setMapSize(size); drawPassMap(cv, p); }
+  if (p.cov) { const cv = document.createElement("canvas"); cv.width = cv.height = size; cv.className = "bigmap"; el.appendChild(cv); setMapSize(size); showMap(cv, p); }
   else el.insertAdjacentHTML("beforeend", `<p class="muted">No coverage available.</p>`);
+  el.insertAdjacentHTML("beforeend", `<div class="products"></div>`);
   document.body.appendChild(el);
 }
 window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { base = null; });
+
+// ---------------------------------------------------------------- products: what was received and processed
+// When DATA.products is set, <products.url>index.js next to the page is loaded (and reloaded every
+// products.poll seconds) as a script calling viewer.add("products", [...]).  Each item has the
+// satellite name, the data start and end (unix seconds), and optionally an image in the map's
+// projection, a full-size link and a name; items are matched to passes by satellite and time overlap.
+const PRODUCTS = DATA.products && DATA.products.url !== undefined ? DATA.products : null;
+let productsLoaded = false;
+const images = new Map();
+window.viewer = {add(kind, items) { if (kind === "products") applyProducts(items); }};
+function applyProducts(items) {
+  for (const p of passes) p.products = [];
+  for (const it of (items || [])) {
+    const sat = normalize(it.sat);
+    for (const p of passes) if (normalize(p.sat) === sat && it.start < p.e && it.end > p.s) p.products.push(it);
+  }
+  for (const p of passes) p.products.sort((a, b) => a.start - b.start);
+  const legend = document.getElementById("legend"); // absent on the single-pass page
+  if (!productsLoaded && legend) legend.insertAdjacentHTML("beforeend",
+    `<span><i class="sw" style="background:var(--row);border:1px dashed var(--now)"></i>no product received</span>`);
+  productsLoaded = true;
+  if (shown && document.body.contains(shown.canvas)) drawPassMap(shown.canvas, shown.p);
+  if (legend) draw();
+  else if (pagePass) {
+    document.querySelector(".passinfo").innerHTML = passInfoHtml(pagePass);
+    document.querySelector(".products").innerHTML = productLinks(pagePass);
+  }
+}
+function productState(p) { // "received", "missing" (past, scheduled, nothing came) or ""
+  if (!productsLoaded || p.un) return "";
+  if (p.products && p.products.length) return "received";
+  return p.e < Date.now() / 1000 - 1800 ? "missing" : "";
+}
+function productImage(p) { // the loaded image to draw on the map, if any
+  const it = (p.products || []).find(q => q.image);
+  if (!it) return null;
+  const url = PRODUCTS.url + it.image;
+  if (!images.has(url)) {
+    const im = new Image();
+    im.onload = () => { if (shown && document.body.contains(shown.canvas)) drawPassMap(shown.canvas, shown.p); };
+    im.src = url;
+    images.set(url, im);
+  }
+  const im = images.get(url);
+  return im.complete && im.naturalWidth ? im : null;
+}
+function productsHtml(p) {
+  const state = productState(p);
+  if (state === "missing") return `<div class="warn">no product received</div>`;
+  if (state !== "received") return "";
+  const s = Math.min(...p.products.map(q => q.start)), e = Math.max(...p.products.map(q => q.end));
+  return `<div>data ${hhmmss(s)} → ${hhmmss(e)} UTC` +
+    (s - p.s > 60 || p.e - e > 60 ? ` <span class="warn">(${Math.round(Math.max(0, s - p.s))} s late start, ${Math.round(Math.max(0, p.e - e))} s early end)</span>` : "") +
+    `</div><div class="muted">${p.products.map(q => esc(q.name || q.image || q.link || "product")).join(", ")}</div>`;
+}
+function productLinks(p) {
+  if (!p.products || !p.products.length) return "";
+  return `<p>${p.products.map(q => {
+    const href = q.link || q.image;
+    return href ? `<a href="${esc(PRODUCTS.url + href)}" target="_blank">${esc(q.name || href)}</a>` : esc(q.name || "product");
+  }).join(" · ")}</p>`;
+}
+function loadProducts() {
+  const s = document.createElement("script");
+  s.src = PRODUCTS.url + "index.js?t=" + Date.now();
+  s.onload = s.onerror = () => s.remove();
+  document.head.appendChild(s);
+}
+if (PRODUCTS) { loadProducts(); setInterval(loadProducts, Math.max(10, PRODUCTS.poll || 120) * 1000); }
 
 // ---------------------------------------------------------------- start
 const wanted = new URLSearchParams(location.search).get("pass");

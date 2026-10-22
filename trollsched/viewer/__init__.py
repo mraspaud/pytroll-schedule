@@ -19,8 +19,23 @@ def _asset(name):
     return resources.files("trollsched.viewer").joinpath(name).read_text(encoding="utf-8")
 
 
+PRODUCTS = "products/"
+
+
+def products_config(products, poll=120):
+    """Normalise the *products* argument of :func:`build_page`: a URL with a trailing slash and a poll interval."""
+    if products is None or products is False:
+        return None
+    if products is True:
+        products = PRODUCTS
+    if isinstance(products, str):
+        products = {"url": products}
+    url = products.get("url", "products/")
+    return {"url": url if url.endswith("/") else url + "/", "poll": int(products.get("poll", poll))}
+
+
 def build_page(records, span, coords, coastlines=None, area_outline=None, title=None,
-               view_height=GEO_ALTITUDE_KM, generated=None, sources=()):
+               view_height=GEO_ALTITUDE_KM, generated=None, sources=(), products=True):
     """Build the viewer page.
 
     Args:
@@ -33,6 +48,10 @@ def build_page(records, span, coords, coastlines=None, area_outline=None, title=
         view_height: height of the near-sided perspective viewpoint in km.
         generated: generation time (defaults to now).
         sources: names of the input files, shown in the header.
+        products: where the page finds what was received and processed: a directory relative to
+            the page (``products/`` by default) or a dict ``{"url": ..., "poll": seconds}``; None to
+            disable.  The page loads ``<url>index.js`` from there when it exists; see the viewer
+            documentation for its format.
     """
     lon, lat = coords[0], coords[1]
     start, end = span
@@ -45,6 +64,7 @@ def build_page(records, span, coords, coastlines=None, area_outline=None, title=
         "sun": {"start": timestamp(first), "step": step, "elevation": elevations},
         "generated": (generated or datetime.now(timezone.utc)).strftime("%Y-%m-%d %H:%M UTC"),
         "sources": list(sources),
+        "products": products_config(products),
     }
     title = title or f"Pass schedule {start:%Y-%m-%d} → {end:%Y-%m-%d}"
     page = _asset("template.html")

@@ -34,6 +34,8 @@ svg line{stroke-width:1}
 .bar.un rect{stroke:rgba(128,128,128,.6);stroke-dasharray:3 2}
 .bar.un text{fill:var(--muted)}
 .bar rect.trim{fill:var(--row);stroke:rgba(128,128,128,.6);stroke-dasharray:3 2}
+.bar.missing rect{opacity:.35;stroke:var(--now);stroke-dasharray:2 2}
+.bar.missing text{fill:var(--muted)}
 #tip{display:none;position:absolute;z-index:5;pointer-events:none;background:var(--tip);
   border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:12px;
   line-height:1.45;box-shadow:0 4px 14px rgba(0,0,0,.18);width:300px}

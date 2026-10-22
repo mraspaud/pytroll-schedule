@@ -446,3 +446,17 @@ def test_thumbnail_area_pixels_land_where_the_page_draws_them(lon, lat):
     inner = (size - 4) / size
     x, y = 2 + (float(col) + 0.5) * inner, 2 + (float(row) + 0.5) * inner
     assert (x, y) == pytest.approx(_page_pixel(lon, lat, NRK, 35786.0, size), abs=0.02)
+
+
+@pytest.mark.parametrize(("products", "expected"), [
+    (True, {"url": "products/", "poll": 120}),
+    (None, None),
+    ("received", {"url": "received/", "poll": 120}),
+    ({"url": "../out/", "poll": 30}, {"url": "../out/", "poll": 30}),
+])
+def test_build_page_tells_where_the_products_are(products, expected):
+    """The page looks for products/index.js next to itself unless told otherwise; None disables the overlay."""
+    kwargs = {} if products is True else {"products": products}
+    page = build_page([], (T0, T0 + timedelta(hours=1)), NRK, **kwargs)
+    blob = page[page.index("const DATA = ") + len("const DATA = "):]
+    assert json.loads(blob[:blob.index(";\n")])["products"] == expected
