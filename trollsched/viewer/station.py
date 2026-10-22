@@ -8,7 +8,14 @@ import numpy as np
 
 from trollsched.viewer import build_page, geo
 from trollsched.viewer.records import ScheduledEntry, build_records, normalize, schedule_name
-from trollsched.viewer.sources import load_tles, plan_in_force, read_schedule, schedule_history, visible_passes
+from trollsched.viewer.sources import (
+    history_start,
+    load_tles,
+    plan_in_force,
+    read_schedule,
+    schedule_history,
+    visible_passes,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -69,13 +76,21 @@ def extra_visible_passes(full_passes, entries, span, coords, tle_file, horizon=0
 
 
 def past_entries(history, antenna, avoid_files, since, until, known):
-    """Get the passes planned by earlier runs between *since* and *until*, except those in *known*."""
+    """Get the passes planned by earlier runs between *since* and *until*, except those in *known*.
+
+    Nothing is known before the earliest request file starts, so the past begins
+    there at the earliest.  Returns the entries and the start of the past.
+    """
     if not history:
-        return []
+        return [], until
     files = schedule_history(history, antenna, avoid_files)
+    earliest = history_start(files)
+    if earliest is None:
+        return [], until
+    since = max(since, earliest)
     entries = [e for e in plan_in_force(files, since, until) if e not in set(known)]
     logger.info("Viewer: %d passes from %d earlier schedules since %s", len(entries), len(files), since)
-    return entries
+    return entries, since
 
 
 def past_visible_passes(satellites, since, until, coords, tle_file, horizon=0.0):
@@ -128,8 +143,8 @@ def station_page(station, allpasses, reception_passes, avoid_files, span, delay,
     entries = scheduled_entries(reception_passes, antenna, span[0]) + avoid_entries(avoid_files)
     full = untrimmed(allpasses)
     run_start = span[0]
-    since = run_start - timedelta(hours=history_hours)
-    past = past_entries(history, antenna, avoid_files, since, run_start, entries)
+    past, since = past_entries(history, antenna, avoid_files, run_start - timedelta(hours=history_hours), run_start,
+                               entries)
     if past:
         span = (since, span[1])
         entries += past

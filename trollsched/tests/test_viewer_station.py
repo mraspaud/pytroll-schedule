@@ -145,8 +145,9 @@ def test_station_page_shows_the_plan_in_force_before_the_run(tmp_path, monkeypat
     data = json.loads(blob[:blob.index(";\n")])
     starts = sorted((p["sat"], p["s"] - records.timestamp(T0)) for p in data["passes"])
     assert starts == [("fy3d", 0.0), ("noaa20", -20 * 3600.0), ("noaa21", -15 * 60.0), ("noaa21", 3600.0)]
-    assert data["span"][0] == records.timestamp(T0 - timedelta(hours=24))
-    assert computed[0] == (["fy3d", "noaa20", "noaa21"], T0 - timedelta(hours=24), T0)
+    # the past begins with the earliest request file, 22 hours back, not the 24 asked for
+    assert data["span"][0] == records.timestamp(T0 - timedelta(hours=22))
+    assert computed[0] == (["fy3d", "noaa20", "noaa21"], T0 - timedelta(hours=22), T0)
     assert all("cov" in p for p in data["passes"] if p["sat"] == "noaa20")
 
 
@@ -210,3 +211,26 @@ def test_station_page_takes_the_passes_before_the_schedule_from_the_history_only
     blob = page[page.index("const DATA = ") + len("const DATA = "):]
     data = json.loads(blob[:blob.index(";\n")])
     assert [(p["ant"], p["s"] - records.timestamp(T0)) for p in data["passes"]] == [("meos", -3600.0)]
+
+
+def test_station_page_past_begins_with_the_earliest_schedule(tmp_path, monkeypatch):
+    """Before the earliest request file nothing is known, so nothing is drawn there."""
+    from trollsched.tests.test_viewer import _write_xml
+
+    monkeypatch.setattr(geo, "load_coastlines", lambda path=None, step=1: [])
+    monkeypatch.setattr(geo, "sun_elevation_series", lambda *args, **kwargs: (T0, 900, [0.0]))
+    monkeypatch.setattr(station, "load_tles", lambda path: "lookup")
+    windows = []
+    monkeypatch.setattr(station, "visible_passes",
+                        lambda sats, start, end, coords, lookup, horizon: windows.append((start, end)) or [])
+    tle = tmp_path / "tle.txt"
+    tle.write_text("")
+    earlier = tmp_path / "20261015-090000-request-nrk-meos.xml"
+    _write_xml(earlier, "meos", T0 - timedelta(hours=30), [("fy3d", T0 - timedelta(hours=20))])
+    page = station.station_page(FakeStation("meos"), [], [], [], (T0, T0 + timedelta(hours=3)), 60,
+                                tle_file=str(tle), history=str(tmp_path / "*-*-request-nrk-meos.xml"),
+                                history_hours=168)
+    blob = page[page.index("const DATA = ") + len("const DATA = "):]
+    data = json.loads(blob[:blob.index(";\n")])
+    assert data["span"][0] == records.timestamp(T0 - timedelta(hours=30))
+    assert windows[0] == (T0 - timedelta(hours=30), T0)

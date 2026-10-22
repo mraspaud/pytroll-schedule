@@ -80,6 +80,16 @@ def schedule_history(pattern, antenna, avoid_files=()):
     return history
 
 
+def history_start(files):
+    """Get the earliest ``file-start`` of the request files among *files*, or None without any."""
+    starts = []
+    for path, default_antenna in files:
+        properties, _, (file_start, _) = read_schedule(path, default_antenna=default_antenna)
+        if properties.get("type", "request") == "request":
+            starts.append(file_start)
+    return min(starts, default=None)
+
+
 def plan_in_force(files, since, until):
     """Get the passes planned between *since* and *until*, as the antennas saw them.
 

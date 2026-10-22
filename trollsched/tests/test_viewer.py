@@ -460,3 +460,13 @@ def test_build_page_tells_where_the_products_are(products, expected):
     page = build_page([], (T0, T0 + timedelta(hours=1)), NRK, **kwargs)
     blob = page[page.index("const DATA = ") + len("const DATA = "):]
     assert json.loads(blob[:blob.index(";\n")])["products"] == expected
+
+
+def test_history_start_is_the_earliest_request_file(tmp_path):
+    """The past cannot begin before the earliest request file; reports do not count."""
+    first, second, report = tmp_path / "a.xml", tmp_path / "b.xml", tmp_path / "r.xml"
+    _write_xml(first, "meos", T0 - timedelta(days=2), [])
+    _write_xml(second, "meos", T0 - timedelta(days=1), [])
+    _write_xml(report, "meos", T0 - timedelta(days=5), [], kind="report")
+    assert sources.history_start([(str(p), "x") for p in (second, first, report)]) == T0 - timedelta(days=2)
+    assert sources.history_start([]) is None
