@@ -103,7 +103,7 @@ def test_station_page_combines_station_schedule_and_avoid_lists(tmp_path, monkey
         "<file-start>2026-10-16-09:00:00</file-start><file-end>2026-10-16-12:00:00</file-end></properties>"
         '<pass satellite="noaa21" start-time="2026-10-16-10:00:00" end-time="2026-10-16-10:12:00" />'
         "</acquisition-schedule>")
-    own = FakePass("fy3d", T0, T0 + timedelta(minutes=12))
+    own = FakePass("fy3d", T0 + timedelta(minutes=1), T0 + timedelta(minutes=13))
     own.rec = True
     other = FakePass("noaa21", T0 + timedelta(hours=1), T0 + timedelta(hours=1, minutes=12))
     other.rec = False
@@ -177,3 +177,36 @@ def test_station_page_does_not_recompute_passes_the_scheduler_already_has(tmp_pa
     data = json.loads(blob[:blob.index(";\n")])
     assert sorted(p["s"] - records.timestamp(T0) for p in data["passes"]) == [-20 * 3600.0, -3600.0]
     assert all(p["ant"] == "meos" for p in data["passes"])
+
+
+def test_scheduled_entries_start_with_the_schedule():
+    """Passes the scheduler planned before the schedule starts are not in the request file, nor here."""
+    early = FakePass("fy3d", T0 - timedelta(hours=1), T0 - timedelta(minutes=48))
+    early.rec = True
+    later = FakePass("fy3d", T0 + timedelta(minutes=30), T0 + timedelta(minutes=42))
+    later.rec = True
+    assert [e.start for e in station.scheduled_entries([early, later], "meos", start=T0)] == [later.risetime]
+    assert len(station.scheduled_entries([early, later], "meos")) == 2
+
+
+def test_station_page_takes_the_passes_before_the_schedule_from_the_history_only(tmp_path, monkeypatch):
+    """A pass the scheduler planned before its schedule starts is shown as the earlier run planned it."""
+    from trollsched.tests.test_viewer import _write_xml
+
+    monkeypatch.setattr(geo, "load_coastlines", lambda path=None, step=1: [])
+    monkeypatch.setattr(geo, "sun_elevation_series", lambda *args, **kwargs: (T0, 900, [0.0]))
+    monkeypatch.setattr(station, "load_tles", lambda path: "lookup")
+    monkeypatch.setattr(station, "visible_passes", lambda *args: [])
+    tle = tmp_path / "tle.txt"
+    tle.write_text("")
+    earlier = tmp_path / "20261015-090000-request-nrk-meos.xml"
+    # the earlier run trimmed the pass differently from what the current run would
+    _write_xml(earlier, "meos", T0 - timedelta(hours=22), [("fy3d", T0 - timedelta(hours=1))])
+    planned = FakePass("fy3d", T0 - timedelta(hours=1, minutes=1), T0 - timedelta(minutes=48))
+    planned.rec = True
+    page = station.station_page(FakeStation("meos"), [planned], [planned], [], (T0, T0 + timedelta(hours=3)), 60,
+                                tle_file=str(tle), history=str(tmp_path / "*-*-request-nrk-meos.xml"),
+                                history_hours=24)
+    blob = page[page.index("const DATA = ") + len("const DATA = "):]
+    data = json.loads(blob[:blob.index(";\n")])
+    assert [(p["ant"], p["s"] - records.timestamp(T0)) for p in data["passes"]] == [("meos", -3600.0)]

@@ -13,12 +13,16 @@ from trollsched.viewer.sources import load_tles, plan_in_force, read_schedule, s
 logger = logging.getLogger(__name__)
 
 
-def scheduled_entries(reception_passes, antenna):
-    """Turn the passes selected for reception into schedule entries for *antenna*."""
+def scheduled_entries(reception_passes, antenna, start=None):
+    """Turn the passes selected for reception into schedule entries for *antenna*.
+
+    Like the request file, only passes rising after *start* (the schedule's start) are kept:
+    the scheduler plans from the run time, but the antenna never sees the earlier ones.
+    """
     # whole seconds, like the XML writer, so that the same pass on another antenna matches exactly
     return [ScheduledEntry(schedule_name(p), antenna, p.risetime.replace(microsecond=0),
                            p.falltime.replace(microsecond=0), overpass=p)
-            for p in reception_passes if getattr(p, "rec", False)]
+            for p in reception_passes if getattr(p, "rec", False) and (start is None or p.risetime > start)]
 
 
 def avoid_entries(avoid_files):
@@ -121,7 +125,7 @@ def station_page(station, allpasses, reception_passes, avoid_files, span, delay,
     """
     antenna = getattr(station, "antenna", None) or station.id
     horizon = getattr(station, "local_horizon", 0)
-    entries = scheduled_entries(reception_passes, antenna) + avoid_entries(avoid_files)
+    entries = scheduled_entries(reception_passes, antenna, span[0]) + avoid_entries(avoid_files)
     full = untrimmed(allpasses)
     run_start = span[0]
     since = run_start - timedelta(hours=history_hours)
