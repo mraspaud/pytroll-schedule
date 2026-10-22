@@ -168,3 +168,31 @@ def sun_elevation_series(start, end, lon, lat, step=timedelta(minutes=15)):
     times = np.array([start + step * i for i in range(count)], dtype="datetime64[us]")
     elevations = 90 - astronomy.sun_zenith_angle(times, lon, lat)
     return start, int(step.total_seconds()), [round(float(e), 1) for e in elevations]
+
+
+def horizon_radius(height_km, earth_radius_km=6371.0):
+    """Get the radius of the visible disc from *height_km* above the Earth, in Earth radii.
+
+    This is where the near-sided perspective projection puts the horizon; the
+    page's map draws the disc with this radius.
+    """
+    ratio = (earth_radius_km + height_km) / earth_radius_km
+    return ratio / (ratio + 1) * np.sqrt(1 - 1 / ratio ** 2)
+
+
+def thumbnail_area(coords, height_km=35786.0, size=800, area_id="schedule_viewer"):
+    """Get the area definition of the page's map, for thumbnails drawn on top of it.
+
+    An image resampled onto this area (with transparency outside the swath)
+    overlays the map exactly: a spherical near-sided perspective centred on
+    the station at ``coords`` (lon, lat, ...), seen from *height_km*, covering
+    the whole visible disc in a *size* × *size* image.
+    """
+    from pyresample import AreaDefinition
+
+    earth_radius = 6371000.0
+    half = horizon_radius(height_km, earth_radius / 1000) * earth_radius
+    projection = {"proj": "nsper", "lon_0": coords[0], "lat_0": coords[1], "h": height_km * 1000,
+                  "R": earth_radius, "units": "m", "no_defs": None, "type": "crs"}
+    return AreaDefinition(area_id, "Schedule viewer map, for thumbnails", area_id, projection, size, size,
+                          (-half, -half, half, half))

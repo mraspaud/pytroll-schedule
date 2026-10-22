@@ -398,3 +398,51 @@ def test_plan_in_force_uses_the_default_antenna_for_old_files(tmp_path):
         "</acquisition-schedule>")
     entries = sources.plan_in_force([(str(path), "meos")], since=T0, until=T0 + timedelta(days=1))
     assert entries == [ScheduledEntry("noaa20", "meos", T0 + timedelta(hours=1), T0 + timedelta(hours=1, minutes=12))]
+
+
+def test_thumbnail_area_matches_the_page_map():
+    """The area is the page's near-sided perspective: spherical, centred on the station, out to the horizon."""
+    area = geo.thumbnail_area(NRK, height_km=35786.0, size=800)
+    assert area.shape == (800, 800)
+    assert area.crs.to_dict()["proj"] == "nsper"
+    assert area.crs.to_dict()["h"] == 35786000.0
+    assert area.crs.to_dict()["R"] == 6371000.0
+    assert area.crs.to_dict()["lon_0"] == NRK[0]
+    assert area.crs.to_dict()["lat_0"] == NRK[1]
+    # the disc radius at the horizon, in Earth radii, as viewer.js computes it
+    ratio = (6371 + 35786) / 6371
+    rmax = ratio / (ratio + 1) * np.sqrt(1 - 1 / ratio ** 2)
+    assert area.area_extent == pytest.approx((-rmax * 6371000, -rmax * 6371000, rmax * 6371000, rmax * 6371000))
+
+
+def test_thumbnail_area_as_yaml():
+    """The area can be dumped for a Satpy areas file."""
+    area = geo.thumbnail_area(NRK)
+    yaml = area.create_areas_def()
+    assert "nsper" in yaml
+    assert "35786000" in yaml
+
+
+def _page_pixel(lon, lat, coords, height_km, size):
+    """Project like viewer.js: Snyder's spherical near-sided perspective onto a size×size canvas with a 2 px rim."""
+    lat0, lon0 = np.radians(coords[1]), np.radians(coords[0])
+    ratio = (6371 + height_km) / 6371
+    scale = (size / 2 - 2) / geo.horizon_radius(height_km)
+    la, lo = np.radians(lat), np.radians(lon) - lon0
+    cosc = np.sin(lat0) * np.sin(la) + np.cos(lat0) * np.cos(la) * np.cos(lo)
+    k = (ratio - 1) / (ratio - cosc)
+    x = k * np.cos(la) * np.sin(lo)
+    y = k * (np.cos(lat0) * np.sin(la) - np.sin(lat0) * np.cos(la) * np.cos(lo))
+    return size / 2 + x * scale, size / 2 - y * scale
+
+
+@pytest.mark.parametrize(("lon", "lat"), [(16.15, 58.58), (0.0, 45.0), (40.0, 70.0), (-20.0, 30.0)])
+def test_thumbnail_area_pixels_land_where_the_page_draws_them(lon, lat):
+    """A thumbnail drawn into the canvas 2 px inside the rim puts each point where the page's map has it."""
+    size = 800
+    area = geo.thumbnail_area(NRK, height_km=35786.0, size=size)
+    col, row = area.get_array_coordinates_from_lonlat(lon, lat)
+    # the image is drawn into the square [2, size - 2]
+    inner = (size - 4) / size
+    x, y = 2 + (float(col) + 0.5) * inner, 2 + (float(row) + 0.5) * inner
+    assert (x, y) == pytest.approx(_page_pixel(lon, lat, NRK, 35786.0, size), abs=0.02)
