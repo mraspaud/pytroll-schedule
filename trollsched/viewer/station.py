@@ -130,7 +130,10 @@ def station_page(station, allpasses, reception_passes, avoid_files, span, delay,
         span = (since, span[1])
         entries += past
         satellites = {schedule_name(p) for p in full} | {e.satellite for e in entries}
-        full += past_visible_passes(satellites, since, run_start, station.coords, tle_file, horizon)
+        # the scheduler's own passes may start before the schedule does: only compute what it does not have
+        full += [p for p in past_visible_passes(satellites, since, run_start, station.coords, tle_file, horizon)
+                 if not any(normalize(schedule_name(q)) == normalize(schedule_name(p))
+                            and q.risetime < p.falltime and q.falltime > p.risetime for q in full)]
     full += extra_visible_passes(full, entries, span, station.coords, tle_file, horizon)
     records = build_records(full, entries, station.coords, station=station.id, area=station.area,
                             delay=delay if isinstance(delay, timedelta) else timedelta(seconds=delay))

@@ -148,3 +148,32 @@ def test_station_page_shows_the_plan_in_force_before_the_run(tmp_path, monkeypat
     assert data["span"][0] == records.timestamp(T0 - timedelta(hours=24))
     assert computed[0] == (["fy3d", "noaa20", "noaa21"], T0 - timedelta(hours=24), T0)
     assert all("cov" in p for p in data["passes"] if p["sat"] == "noaa20")
+
+
+def test_station_page_does_not_recompute_passes_the_scheduler_already_has(tmp_path, monkeypatch):
+    """The scheduler's passes start before the schedule does; the past is only computed before them."""
+    from trollsched.tests.test_viewer import _write_xml
+
+    monkeypatch.setattr(geo, "load_coastlines", lambda path=None, step=1: [])
+    monkeypatch.setattr(geo, "sun_elevation_series", lambda *args, **kwargs: (T0, 900, [0.0]))
+    monkeypatch.setattr(station, "load_tles", lambda path: "lookup")
+    # the TLE computation returns the same window the scheduler knows, plus an older one
+    monkeypatch.setattr(station, "visible_passes",
+                        lambda sats, start, end, coords, lookup, horizon: [
+                            FakePass("fy3d", T0 - timedelta(hours=1), T0 - timedelta(minutes=48)),
+                            FakePass("fy3d", T0 - timedelta(hours=20), T0 - timedelta(hours=19, minutes=48))])
+    tle = tmp_path / "tle.txt"
+    tle.write_text("")
+    earlier = tmp_path / "20261015-090000-request-nrk-meos.xml"
+    _write_xml(earlier, "meos", T0 - timedelta(hours=22), [("fy3d", T0 - timedelta(hours=1)),
+                                                          ("fy3d", T0 - timedelta(hours=20))])
+    # the scheduler started two hours before the schedule, so it already has the pass an hour ago
+    known = FakePass("fy3d", T0 - timedelta(hours=1), T0 - timedelta(minutes=48))
+    known.rec = False
+    page = station.station_page(FakeStation("meos"), [known], [known], [], (T0, T0 + timedelta(hours=3)), 60,
+                                tle_file=str(tle), history=str(tmp_path / "*-*-request-nrk-meos.xml"),
+                                history_hours=24)
+    blob = page[page.index("const DATA = ") + len("const DATA = "):]
+    data = json.loads(blob[:blob.index(";\n")])
+    assert sorted(p["s"] - records.timestamp(T0) for p in data["passes"]) == [-20 * 3600.0, -3600.0]
+    assert all(p["ant"] == "meos" for p in data["passes"])
