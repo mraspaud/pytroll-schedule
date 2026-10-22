@@ -420,11 +420,14 @@ def _write_station_viewer(scheduler, station, allpasses, reception_passes, start
     patterns.setdefault("file_html", "{dir_output}/{date}-{time}-schedule-{station}.html")
     filename = build_filename("file_html", patterns, pattern_args)
     span = (start_time + timedelta(hours=scheduler.start), start_time + timedelta(hours=scheduler.forward))
+    # the request files of earlier runs fill the past of the page, as far back as a run looks forward
+    history = build_filename("file_xml", scheduler.patterns, dict(pattern_args, date="*", time="*", mode="request"))
     page = station_page(station, allpasses, reception_passes, scheduler.opts.avoid, span,
                         timedelta(seconds=scheduler.opts.delay), tle_file=tle_file,
                         coastlines_file=patterns.get("file_coastlines"),
                         title=f"{station.id} pass schedule {span[0]:%Y-%m-%d} → {span[1]:%Y-%m-%d}",
-                        sources=[os.path.basename(f) for f in scheduler.opts.avoid or []])
+                        sources=[os.path.basename(f) for f in scheduler.opts.avoid or []],
+                        history=history, history_hours=scheduler.forward)
     with open(filename, "w", encoding="utf-8") as stream:
         stream.write(page)
     logger.info("Generated %s", filename)

@@ -333,3 +333,68 @@ def test_build_page_embeds_data_and_assets():
     assert len(data["sun"]["elevation"]) == 9
     assert data["sources"] == ["a.xml"]
     assert "function draw" in page
+
+
+def _write_xml(path, antenna, file_start, passes, kind="request"):
+    path.write_text(
+        f"<acquisition-schedule><properties><type>{kind}</type><antenna>{antenna}</antenna>"
+        f"<file-start>{file_start:%Y-%m-%d-%H:%M:%S}</file-start>"
+        f"<file-end>{file_start + timedelta(days=7):%Y-%m-%d-%H:%M:%S}</file-end></properties>" +
+        "".join(f'<pass satellite="{sat}" start-time="{start:%Y-%m-%d-%H:%M:%S}" '
+                f'end-time="{start + timedelta(minutes=12):%Y-%m-%d-%H:%M:%S}" />' for sat, start in passes) +
+        "</acquisition-schedule>")
+
+
+def test_schedule_history_finds_previous_runs_and_the_other_antennas(tmp_path):
+    """Previous runs match the file pattern; the other antennas' runs sit next to their avoid files."""
+    own = [tmp_path / f"2026101{d}-090000-aquisition-schedule-request-nrk-2met.xml" for d in (4, 5, 6)]
+    report = tmp_path / "20261015-090000-aquisition-schedule-report-nrk-2met.xml"
+    other_dir = tmp_path / "cgi"
+    other_dir.mkdir()
+    others = [other_dir / f"2026101{d}-083000-aquisition-schedule-request-nrk-cgi.xml" for d in (5, 6)]
+    unrelated = other_dir / "20261016-083000-aquisition-schedule-request-nrk-meos.xml"
+    for path in own + others + [report, unrelated]:
+        path.write_text("")
+    pattern = str(tmp_path / "*-*-aquisition-schedule-request-nrk-2met.xml")
+    history = sources.schedule_history(pattern, "2met", avoid_files=[str(others[-1])])
+    assert history == [(str(p), "2met") for p in own] + [(str(p), others[-1].stem) for p in others]
+
+
+def test_plan_in_force_keeps_each_file_until_the_next_one_starts(tmp_path):
+    """A pass counts for the file that was current when it started."""
+    first, second = tmp_path / "a.xml", tmp_path / "b.xml"
+    _write_xml(first, "meos", T0, [("noaa20", T0 + timedelta(hours=1)), ("npp", T0 + timedelta(hours=13)),
+                                   ("aqua", T0 - timedelta(hours=1))])
+    _write_xml(second, "meos", T0 + timedelta(hours=12), [("npp", T0 + timedelta(hours=13)),
+                                                          ("metop-b", T0 + timedelta(hours=14)),
+                                                          ("metop-c", T0 + timedelta(hours=20))])
+    # given out of order, with the pass before the first file's start outside the window
+    entries = sources.plan_in_force([(str(second), "x"), (str(first), "x")],
+                                    since=T0, until=T0 + timedelta(hours=18))
+    assert [(e.satellite, e.start, e.antenna) for e in entries] == [
+        ("noaa20", T0 + timedelta(hours=1), "meos"),
+        ("npp", T0 + timedelta(hours=13), "meos"),
+        ("metop-b", T0 + timedelta(hours=14), "meos")]
+
+
+def test_plan_in_force_resolves_each_antenna_separately_and_skips_reports(tmp_path):
+    """Files are grouped by antenna; a report file is not a request."""
+    meos, cgi, report = tmp_path / "meos.xml", tmp_path / "cgi.xml", tmp_path / "report.xml"
+    _write_xml(meos, "meos", T0, [("noaa20", T0 + timedelta(hours=1))])
+    _write_xml(cgi, "cgi", T0 + timedelta(minutes=30), [("noaa21", T0 + timedelta(hours=1))])
+    _write_xml(report, "meos", T0 + timedelta(minutes=10), [("aqua", T0 + timedelta(hours=2))], kind="report")
+    entries = sources.plan_in_force([(str(p), "x") for p in (meos, cgi, report)],
+                                    since=T0, until=T0 + timedelta(days=1))
+    assert sorted((e.satellite, e.antenna) for e in entries) == [("noaa20", "meos"), ("noaa21", "cgi")]
+
+
+def test_plan_in_force_uses_the_default_antenna_for_old_files(tmp_path):
+    """Files without an antenna property belong to the antenna they were found for."""
+    path = tmp_path / "20261016-090000-old.xml"
+    path.write_text(
+        "<acquisition-schedule><properties>"
+        "<file-start>2026-10-16-09:00:00</file-start><file-end>2026-10-23-09:00:00</file-end></properties>"
+        '<pass satellite="noaa20" start-time="2026-10-16-10:00:00" end-time="2026-10-16-10:12:00" />'
+        "</acquisition-schedule>")
+    entries = sources.plan_in_force([(str(path), "meos")], since=T0, until=T0 + timedelta(days=1))
+    assert entries == [ScheduledEntry("noaa20", "meos", T0 + timedelta(hours=1), T0 + timedelta(hours=1, minutes=12))]

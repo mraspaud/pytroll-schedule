@@ -1,11 +1,12 @@
 """Tests for building the viewer page from a scheduling run."""
 
+import json
 from datetime import datetime, timedelta
 
 import pytest
 
 from trollsched.tests.test_viewer import NRK, FakeBoundary, FakePass, _fake_subsolar  # noqa: F401
-from trollsched.viewer import geo, station
+from trollsched.viewer import geo, records, station
 from trollsched.viewer.records import ScheduledEntry
 
 T0 = datetime(2026, 10, 16, 9, 0, 0)
@@ -114,3 +115,36 @@ def test_station_page_combines_station_schedule_and_avoid_lists(tmp_path, monkey
     assert '"ant":"cgi"' in page
     assert '"sat":"metop-b"' in page
     assert '"un":1' in page
+
+
+def test_station_page_shows_the_plan_in_force_before_the_run(tmp_path, monkeypatch):
+    """Passes from earlier runs fill the past; those the current inputs repeat are not duplicated."""
+    from trollsched.tests.test_viewer import _write_xml
+
+    monkeypatch.setattr(geo, "load_coastlines", lambda path=None, step=1: [])
+    monkeypatch.setattr(geo, "sun_elevation_series", lambda *args, **kwargs: (T0, 900, [0.0]))
+    computed = []
+    monkeypatch.setattr(station, "load_tles", lambda path: "lookup")
+    monkeypatch.setattr(station, "visible_passes",
+                        lambda sats, start, end, coords, lookup, horizon: computed.append((sorted(sats), start, end))
+                        or [FakePass("noaa20", T0 - timedelta(hours=20), T0 - timedelta(hours=20, minutes=-12))])
+    tle = tmp_path / "tle.txt"
+    tle.write_text("")
+    earlier = tmp_path / "20261015-090000-request-nrk-2met.xml"
+    _write_xml(earlier, "2met", T0 - timedelta(hours=22), [("noaa20", T0 - timedelta(hours=20)),
+                                                          ("npp", T0 - timedelta(hours=40))])
+    avoid = tmp_path / "20261016-083000-request-nrk-cgi.xml"
+    _write_xml(avoid, "cgi", T0 - timedelta(minutes=30), [("noaa21", T0 - timedelta(minutes=15)),
+                                                         ("noaa21", T0 + timedelta(hours=1))])
+    own = FakePass("fy3d", T0, T0 + timedelta(minutes=12))
+    own.rec = True
+    page = station.station_page(FakeStation("2met"), [own], [own], [str(avoid)], (T0, T0 + timedelta(hours=3)), 60,
+                                tle_file=str(tle), history=str(tmp_path / "*-*-request-nrk-2met.xml"),
+                                history_hours=24)
+    blob = page[page.index("const DATA = ") + len("const DATA = "):]
+    data = json.loads(blob[:blob.index(";\n")])
+    starts = sorted((p["sat"], p["s"] - records.timestamp(T0)) for p in data["passes"])
+    assert starts == [("fy3d", 0.0), ("noaa20", -20 * 3600.0), ("noaa21", -15 * 60.0), ("noaa21", 3600.0)]
+    assert data["span"][0] == records.timestamp(T0 - timedelta(hours=24))
+    assert computed[0] == (["fy3d", "noaa20", "noaa21"], T0 - timedelta(hours=24), T0)
+    assert all("cov" in p for p in data["passes"] if p["sat"] == "noaa20")

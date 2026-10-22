@@ -4,7 +4,9 @@ Reading acquisition schedules, computing visibility windows from TLEs, and
 estimating the station position when it is not known.
 """
 
+import glob
 import logging
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -57,6 +59,49 @@ def read_schedule(path, default_antenna=None):
     span = (datetime.strptime(properties["file-start"], TIME_FMT),
             datetime.strptime(properties["file-end"], TIME_FMT))
     return properties, entries, span
+
+
+def schedule_history(pattern, antenna, avoid_files=()):
+    """Find the schedule files of previous runs.
+
+    *pattern* is a glob for this station's own request files, which belong
+    to *antenna*.  The other antennas' runs are found next to each avoid
+    file: files whose names differ from it only in digits (the run date and
+    time).  Like the avoid file itself, they belong to the antenna named in
+    their properties, or failing that to the avoid file's stem.
+
+    Returns ``(path, default_antenna)`` pairs, sorted by path within each group.
+    """
+    history = [(path, antenna) for path in sorted(glob.glob(pattern))]
+    for avoid in avoid_files or ():
+        avoid = Path(avoid)
+        siblings = re.sub(r"\d+", "*", glob.escape(avoid.name))
+        history.extend((path, avoid.stem) for path in sorted(glob.glob(str(avoid.parent / siblings))))
+    return history
+
+
+def plan_in_force(files, since, until):
+    """Get the passes planned between *since* and *until*, as the antennas saw them.
+
+    Schedules overlap: every run covers days, and a new one replaces the
+    previous one from its own start.  So, for each antenna, a file counts
+    for the passes starting between its ``file-start`` and the next file's.
+    *files* are ``(path, default_antenna)`` pairs; report files are skipped.
+    """
+    by_antenna = {}
+    for path, default_antenna in files:
+        properties, entries, (file_start, _) = read_schedule(path, default_antenna=default_antenna)
+        if properties.get("type", "request") != "request":
+            continue
+        by_antenna.setdefault(entries[0].antenna if entries else properties.get("antenna") or default_antenna,
+                              []).append((file_start, entries))
+    plan = []
+    for runs in by_antenna.values():
+        runs.sort(key=lambda run: run[0])
+        for (file_start, entries), following in zip(runs, runs[1:] + [(until, [])]):
+            end = min(following[0], until)
+            plan.extend(e for e in entries if max(file_start, since) <= e.start < end)
+    return sorted(plan, key=lambda e: (e.start, e.antenna))
 
 
 def load_tles(path, aliases=None):

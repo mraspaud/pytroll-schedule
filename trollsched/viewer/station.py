@@ -8,7 +8,7 @@ import numpy as np
 
 from trollsched.viewer import build_page, geo
 from trollsched.viewer.records import ScheduledEntry, build_records, normalize, schedule_name
-from trollsched.viewer.sources import load_tles, read_schedule, visible_passes
+from trollsched.viewer.sources import load_tles, plan_in_force, read_schedule, schedule_history, visible_passes
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +64,26 @@ def extra_visible_passes(full_passes, entries, span, coords, tle_file, horizon=0
                    for e in unmatched)]
 
 
+def past_entries(history, antenna, avoid_files, since, until, known):
+    """Get the passes planned by earlier runs between *since* and *until*, except those in *known*."""
+    if not history:
+        return []
+    files = schedule_history(history, antenna, avoid_files)
+    entries = [e for e in plan_in_force(files, since, until) if e not in set(known)]
+    logger.info("Viewer: %d passes from %d earlier schedules since %s", len(entries), len(files), since)
+    return entries
+
+
+def past_visible_passes(satellites, since, until, coords, tle_file, horizon=0.0):
+    """Compute the visibility windows of *satellites* (schedule names) between *since* and *until*."""
+    if not satellites or since >= until:
+        return []
+    if not tle_file or not Path(tle_file).exists():
+        logger.warning("No TLE file; passes before the run are shown without coverage")
+        return []
+    return visible_passes(satellites, since, until, coords, load_tles(tle_file), horizon)
+
+
 def area_outline(area):
     """Get the lon/lat ring of an area of interest, or None when it has no usable boundary."""
     try:
@@ -82,7 +102,7 @@ def area_outline(area):
 
 
 def station_page(station, allpasses, reception_passes, avoid_files, span, delay, tle_file=None,
-                 coastlines_file=None, title=None, sources=()):
+                 coastlines_file=None, title=None, sources=(), history=None, history_hours=0):
     """Build the viewer page for one station of a scheduling run.
 
     Args:
@@ -96,11 +116,22 @@ def station_page(station, allpasses, reception_passes, avoid_files, span, delay,
         coastlines_file: shapefile for the map background, or None for Natural Earth via cartopy.
         title: page title.
         sources: input file names shown in the header.
+        history: glob of this station's request files from earlier runs, to fill the past of the page.
+        history_hours: how far back the past goes, from the start of the schedule.
     """
     antenna = getattr(station, "antenna", None) or station.id
+    horizon = getattr(station, "local_horizon", 0)
     entries = scheduled_entries(reception_passes, antenna) + avoid_entries(avoid_files)
     full = untrimmed(allpasses)
-    full += extra_visible_passes(full, entries, span, station.coords, tle_file, getattr(station, "local_horizon", 0))
+    run_start = span[0]
+    since = run_start - timedelta(hours=history_hours)
+    past = past_entries(history, antenna, avoid_files, since, run_start, entries)
+    if past:
+        span = (since, span[1])
+        entries += past
+        satellites = {schedule_name(p) for p in full} | {e.satellite for e in entries}
+        full += past_visible_passes(satellites, since, run_start, station.coords, tle_file, horizon)
+    full += extra_visible_passes(full, entries, span, station.coords, tle_file, horizon)
     records = build_records(full, entries, station.coords, station=station.id, area=station.area,
                             delay=delay if isinstance(delay, timedelta) else timedelta(seconds=delay))
     logger.info("Viewer: %d scheduled passes, %d not scheduled, %d trimmed",

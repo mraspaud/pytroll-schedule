@@ -1,7 +1,7 @@
 """Behavioral tests for scheduling and publication."""
 import pickle
 from copy import copy
-from datetime import timedelta
+from datetime import timedelta, timezone
 from multiprocessing import get_all_start_methods, get_context
 from types import SimpleNamespace
 
@@ -231,3 +231,28 @@ def test_station_writes_html_viewer(station_setup, tmp_path, monkeypatch):
     assert "<!doctype html>" in page
     assert page.count('"ant":"one"') == 2
     assert '"orbit":' in page
+
+
+def test_station_viewer_shows_passes_planned_by_earlier_runs(station_setup, tmp_path, monkeypatch):
+    """Request files from earlier runs in the output directory fill the past of the page."""
+    station, scheduler, start = station_setup
+    scheduler.opts = parse_args(["-c", "unused", "--html"])
+    scheduler.opts.output_dir = str(tmp_path)
+    scheduler.opts.comb = False
+    scheduler.patterns["file_html"] = str(tmp_path / "{station}.html")
+    fmt = "%Y-%m-%d-%H:%M:%S"
+    earlier = start - timedelta(hours=2)
+    (tmp_path / "one-request.xml").write_text(
+        f"<acquisition-schedule><properties><type>request</type><antenna>one</antenna>"
+        f"<file-start>{start - timedelta(hours=3):{fmt}}</file-start>"
+        f"<file-end>{start + timedelta(hours=1):{fmt}}</file-end></properties>"
+        f'<pass satellite="noaa 19" start-time="{earlier:{fmt}}" end-time="{earlier + timedelta(minutes=10):{fmt}}" />'
+        f'<pass satellite="noaa 19" start-time="{start + timedelta(minutes=30):{fmt}}" '
+        f'end-time="{start + timedelta(minutes=40):{fmt}}" />'
+        "</acquisition-schedule>")
+    monkeypatch.setattr("trollsched.viewer.geo.load_coastlines", lambda path=None, step=1: [])
+    station.single_station(scheduler, start, str(tmp_path / "sometles.txt"))
+    page = (tmp_path / "one.html").read_text(encoding="utf-8")
+    assert page.count('"ant":"one"') == 3
+    assert f'"s":{earlier.replace(tzinfo=timezone.utc).timestamp()}' in page
+    assert f'"s":{(start + timedelta(minutes=30)).replace(tzinfo=timezone.utc).timestamp()}' not in page
