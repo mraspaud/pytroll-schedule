@@ -100,6 +100,16 @@ this section.
 ``file_graph``
 	Graph files with information about the computation.
 
+``file_html``
+	Path and filename of the interactive HTML schedule page written with
+	``--html`` (default: ``{dir_output}/{date}-{time}-schedule-{station}.html``).
+	See :doc:`viewer`.
+
+``file_coastlines``
+	Shapefile with coastlines or country outlines for the maps of the HTML
+	page.  When unset, Natural Earth data is downloaded through cartopy, which
+	needs internet access; see :doc:`viewer` for an offline setup.
+
 
 Stations
 --------

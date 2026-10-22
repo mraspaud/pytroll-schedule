@@ -127,3 +127,16 @@ def october_2026_tle_file(tmp_path):
     file_path = tmp_path / "october_2026.tle"
     file_path.write_text(OCTOBER_2026_TLES)
     return file_path
+
+
+@pytest.fixture(autouse=True)
+def _no_tle_download(monkeypatch):
+    """Fail fast if a test would fetch TLEs from the internet.
+
+    Tests must use fixed TLEs (a fixture file) so that they are reproducible
+    and do not depend on, or get throttled by, celestrak.
+    """
+    def refuse(*args, **kwargs):
+        raise RuntimeError("Tests must not fetch TLEs from the internet; use a fixture TLE file")
+
+    monkeypatch.setattr("pyorbital.tlefile.fetch", refuse)

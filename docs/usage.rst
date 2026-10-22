@@ -61,6 +61,8 @@ Usage of the schedule script::
 	  --scisys              generate a SCISYS schedule file
 	  -p, --plot            generate plot images
 	  -g, --graph           save graph info
+	  --html                generate an interactive HTML page of the schedule
+	                        (see :doc:`viewer`)
 
 
 When using ``--avoid``, satellite identifiers in the XML are matched against

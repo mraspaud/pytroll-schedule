@@ -21,6 +21,7 @@ Contents:
 
    usage
    config
+   viewer
    example
 
 Indices and tables
