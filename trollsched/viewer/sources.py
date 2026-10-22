@@ -80,14 +80,38 @@ def schedule_history(pattern, antenna, avoid_files=()):
     return history
 
 
+def read_properties(path):
+    """Read only the ``<properties>`` of an acquisition schedule, which come before the passes."""
+    properties = {}
+    for _, element in ET.iterparse(path, events=("end",)):
+        if element.tag == "properties":
+            properties = {child.tag: child.text for child in element}
+            break
+    return properties
+
+
+def request_files(files, since=None, until=None):
+    """Keep the request files among *files* that cover some of the time between *since* and *until*.
+
+    Only the properties of each file are read, so a directory with months of
+    schedules costs little.  Returns ``(path, default_antenna, file_start)`` triples.
+    """
+    kept = []
+    for path, default_antenna in files:
+        properties = read_properties(path)
+        if properties.get("type", "request") != "request":
+            continue
+        file_start = datetime.strptime(properties["file-start"], TIME_FMT)
+        file_end = datetime.strptime(properties["file-end"], TIME_FMT)
+        if (since is not None and file_end <= since) or (until is not None and file_start >= until):
+            continue
+        kept.append((path, default_antenna, file_start))
+    return kept
+
+
 def history_start(files):
     """Get the earliest ``file-start`` of the request files among *files*, or None without any."""
-    starts = []
-    for path, default_antenna in files:
-        properties, _, (file_start, _) = read_schedule(path, default_antenna=default_antenna)
-        if properties.get("type", "request") == "request":
-            starts.append(file_start)
-    return min(starts, default=None)
+    return min((file_start for _, _, file_start in request_files(files)), default=None)
 
 
 def plan_in_force(files, since, until):
@@ -99,10 +123,8 @@ def plan_in_force(files, since, until):
     *files* are ``(path, default_antenna)`` pairs; report files are skipped.
     """
     by_antenna = {}
-    for path, default_antenna in files:
+    for path, default_antenna, _ in request_files(files, since, until):
         properties, entries, (file_start, _) = read_schedule(path, default_antenna=default_antenna)
-        if properties.get("type", "request") != "request":
-            continue
         by_antenna.setdefault(entries[0].antenna if entries else properties.get("antenna") or default_antenna,
                               []).append((file_start, entries))
     plan = []

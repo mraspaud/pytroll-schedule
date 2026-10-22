@@ -3,6 +3,7 @@
 import json
 import sys
 from datetime import datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -470,3 +471,25 @@ def test_history_start_is_the_earliest_request_file(tmp_path):
     _write_xml(report, "meos", T0 - timedelta(days=5), [], kind="report")
     assert sources.history_start([(str(p), "x") for p in (second, first, report)]) == T0 - timedelta(days=2)
     assert sources.history_start([]) is None
+
+
+def test_plan_in_force_only_parses_files_that_cover_the_period(tmp_path, monkeypatch):
+    """Months of old schedules in the directory are not read beyond their properties."""
+    old, recent = tmp_path / "old.xml", tmp_path / "recent.xml"
+    _write_xml(old, "meos", T0 - timedelta(days=60), [("noaa20", T0 - timedelta(days=59))])
+    _write_xml(recent, "meos", T0 - timedelta(days=2), [("noaa20", T0 - timedelta(days=1))])
+    parsed = []
+    real = sources.read_schedule
+    monkeypatch.setattr(sources, "read_schedule", lambda path, **kw: parsed.append(Path(path).name) or real(path, **kw))
+    entries = sources.plan_in_force([(str(old), "x"), (str(recent), "x")], since=T0 - timedelta(days=7), until=T0)
+    assert parsed == ["recent.xml"]
+    assert [e.start for e in entries] == [T0 - timedelta(days=1)]
+
+
+def test_read_properties_stops_before_the_passes(tmp_path):
+    """Only the header is parsed; a file truncated after it still yields its properties."""
+    path = tmp_path / "sched.xml"
+    _write_xml(path, "cgi", T0, [("noaa20", T0 + timedelta(hours=1))])
+    text = path.read_text()
+    path.write_text(text[:text.index("<pass")] + "<pass broken")
+    assert sources.read_properties(path)["antenna"] == "cgi"
