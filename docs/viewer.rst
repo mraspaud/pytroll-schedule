@@ -32,9 +32,63 @@ What the page shows
   time axis for the station.
 * Optional antenna lanes (a checkbox in the header) showing the occupancy of
   each antenna.
+* The past: the request files of earlier runs found in the output directory
+  (the station's own, and those next to each avoid file for the other
+  antennas) fill the page back as far as a run looks forward, with the plan
+  as it was in force at each moment: runs overlap, so each file counts for
+  the passes starting before the next file's start.
 
 The page is one file with the data embedded, so it can be copied or served
 from anywhere, and it works without network access.
+
+What was received
+-----------------
+
+The page can also show what came out of each pass, from an index that the
+processing side maintains next to it.  When ``products/index.js`` exists in
+the page's directory, the page loads it and reloads it every two minutes
+while open, so the products of a pass appear a few minutes after processing
+without regenerating the page.  Nothing needs to be served: the index is a
+script, which browsers load from a plain file as well, as long as it sits at
+or below the page's directory (Firefox refuses ``..`` in the path).  Without
+an index the page is unchanged.
+
+The index registers the products with the page::
+
+    viewer.add("products", [
+      {"sat": "fy3h", "start": 1792660244, "end": 1792660942,
+       "image": "thumbs/fy3h_20261022_091044.png",
+       "link": "fy3h_20261022_091044_truecolor.png", "name": "true colour"},
+      {"sat": "noaa20", "start": 1792663800, "end": 1792664400,
+       "link": "noaa20_20261022_101000_truecolor.png", "name": "true colour"}
+    ]);
+
+Each product has the satellite name as used in the schedules (compared
+ignoring case and punctuation, so ``NOAA-20`` matches ``noaa20``), the data
+start and end as unix seconds, and any of: ``image``, a thumbnail in the
+map's projection; ``link``, a product to open; ``name``, a label.  Paths are
+relative to the index.  Products are matched to passes by satellite and time
+overlap, so the data times may differ from the scheduled ones.
+
+A pass with products shows the data times, with any late start or early end,
+and links to the products; the first product with an image shows it on the
+map, inside the planned swath outline.  A scheduled pass that ended without
+any product is faded on the timeline and noted in the list.
+
+Thumbnails are images in the page's map projection, with transparency
+outside the swath.  :func:`trollsched.viewer.geo.thumbnail_area` gives the
+pyresample area to resample onto, for the station and the map's viewpoint
+height (geostationary by default)::
+
+    from trollsched.viewer.geo import thumbnail_area
+    area = thumbnail_area((16.15, 58.58, 0.05), size=800)
+    scene.resample(area).save_dataset("overview", filename=..., fill_value=None)
+
+The ``products`` argument of :func:`trollsched.viewer.build_page` moves the
+index elsewhere (``{"url": "received/", "poll": 60}``) or disables the
+lookup (``None``).  For a dashboard that people open by URL, give
+``file_html`` a name without the run date and time, so that each run
+overwrites the page, and keep the products directory next to it.
 
 Output file and map background
 ------------------------------
